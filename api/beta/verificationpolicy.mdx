@@ -1,0 +1,181 @@
+---
+title: VerificationPolicy
+description: API reference for the VerificationPolicy v1alpha1 resource
+---
+
+<Warning>
+  VerificationPolicy is at v1alpha1 stability level and subject to change.
+</Warning>
+
+A VerificationPolicy defines rules for verifying the authenticity and integrity of Tekton resources using cryptographic signatures.
+
+## Resource Definition
+
+<ParamField path="apiVersion" type="string" required>
+  `tekton.dev/v1alpha1`
+</ParamField>
+
+<ParamField path="kind" type="string" required>
+  `VerificationPolicy`
+</ParamField>
+
+<ParamField path="metadata" type="ObjectMeta" required>
+  Standard Kubernetes metadata.
+</ParamField>
+
+<ParamField path="spec" type="VerificationPolicySpec" required>
+  Specification of the verification policy.
+</ParamField>
+
+## VerificationPolicySpec
+
+<ParamField path="resources" type="[]ResourcePattern" required>
+  Patterns defining which resources this policy applies to.
+
+  <Expandable title="ResourcePattern fields">
+    <ParamField path="pattern" type="string" required>
+      Regex pattern to match resource sources.
+
+      Examples:
+      - `https://github.com/tektoncd/catalog.git`
+      - `https://github.com/tektoncd/*`
+      - `gcr.io/tekton-releases/catalog/upstream/*`
+      - `https://artifacthub.io/*`
+    </ParamField>
+  </Expandable>
+</ParamField>
+
+<ParamField path="authorities" type="[]Authority" required>
+  List of authorities (public keys) for validating signatures.
+
+  <Expandable title="Authority fields">
+    <ParamField path="name" type="string" required>
+      Name of this authority.
+    </ParamField>
+
+    <ParamField path="key" type="KeyRef">
+      Public key reference for validation.
+
+      <Expandable title="KeyRef fields">
+        <ParamField path="data" type="string">
+          Inline public key data (PEM format).
+        </ParamField>
+
+        <ParamField path="secretRef" type="SecretReference">
+          Reference to a Secret containing the public key.
+
+          <Expandable title="SecretReference fields">
+            <ParamField path="name" type="string">
+              Name of the secret.
+            </ParamField>
+
+            <ParamField path="namespace" type="string">
+              Namespace of the secret.
+            </ParamField>
+          </Expandable>
+        </ParamField>
+
+        <ParamField path="kms" type="string">
+          KMS URL for the public key (not yet supported).
+
+          Example format:
+          ```
+          gcpkms://projects/[PROJECT]/locations/[LOCATION]/keyRings/[KEYRING]/cryptoKeys/[KEY]/cryptoKeyVersions/[VERSION]
+          ```
+        </ParamField>
+
+        <ParamField path="hashAlgorithm" type="string" default="sha256">
+          Hash algorithm for signature verification.
+
+          Supported values:
+          - `sha224`
+          - `sha256` (default)
+          - `sha384`
+          - `sha512`
+        </ParamField>
+      </Expandable>
+    </ParamField>
+  </Expandable>
+</ParamField>
+
+<ParamField path="mode" type="string" default="enforce">
+  How to handle verification failures.
+
+  Values:
+  - `enforce` - Fail the TaskRun/PipelineRun if verification fails (default)
+  - `warn` - Log warnings but don't fail on verification failure
+</ParamField>
+
+## How Verification Works
+
+1. When a Task or Pipeline is fetched via remote resolution, Tekton checks for matching VerificationPolicies
+2. The resource URL is matched against the `resources` patterns
+3. If a policy matches, the resource's signature is verified using the specified authorities
+4. Verification uses the configured hash algorithm and public key
+5. Based on the `mode`, verification failure either blocks execution or logs a warning
+
+## Signature Format
+
+Tekton uses [Sigstore/cosign](https://docs.sigstore.dev/) compatible signatures. Resources should be signed using cosign or compatible tools.
+
+## Example: Verify GitHub Resources
+
+```yaml
+apiVersion: tekton.dev/v1alpha1
+kind: VerificationPolicy
+metadata:
+  name: verify-tekton-catalog
+spec:
+  resources:
+    - pattern: "https://github.com/tektoncd/catalog.git"
+  authorities:
+    - name: tekton-catalog-key
+      key:
+        data: |
+          -----BEGIN PUBLIC KEY-----
+          MFkwEwYHKoZIzj0CAQYIKoZIzj0DAQcDQgAE...
+          -----END PUBLIC KEY-----
+        hashAlgorithm: sha256
+  mode: enforce
+```
+
+## Example: Verify OCI Bundles
+
+```yaml
+apiVersion: tekton.dev/v1alpha1
+kind: VerificationPolicy
+metadata:
+  name: verify-gcr-bundles
+spec:
+  resources:
+    - pattern: "gcr.io/tekton-releases/catalog/upstream/*"
+  authorities:
+    - name: gcr-key
+      key:
+        secretRef:
+          name: cosign-pub-key
+          namespace: tekton-pipelines
+  mode: enforce
+```
+
+## Example: Warn Mode
+
+```yaml
+apiVersion: tekton.dev/v1alpha1
+kind: VerificationPolicy
+metadata:
+  name: verify-external-resources
+spec:
+  resources:
+    - pattern: "https://github.com/external-org/*"
+  authorities:
+    - name: external-key
+      key:
+        data: |
+          -----BEGIN PUBLIC KEY-----
+          ...
+          -----END PUBLIC KEY-----
+  mode: warn
+```
+
+In warn mode, verification failures are logged but don't prevent execution, useful for gradual policy rollout.

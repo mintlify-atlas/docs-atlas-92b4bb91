@@ -1,0 +1,141 @@
+---
+title: "Simple Pipeline"
+description: "Creating a basic pipeline with multiple tasks"
+---
+
+A pipeline chains together multiple tasks to create a workflow. This example shows a simple pipeline with dependent tasks.
+
+## Example
+
+```yaml
+apiVersion: tekton.dev/v1
+kind: Task
+metadata:
+  name: add-task
+spec:
+  params:
+    - name: first
+      description: the first operand
+    - name: second
+      description: the second operand
+  results:
+    - name: sum
+      description: the sum of the first and second operand
+  steps:
+    - name: add
+      image: mirror.gcr.io/alpine
+      env:
+        - name: OP1
+          value: $(params.first)
+        - name: OP2
+          value: $(params.second)
+      command: ["/bin/sh", "-c"]
+      args:
+        - echo -n $((${OP1}+${OP2})) | tee $(results.sum.path);
+---
+apiVersion: tekton.dev/v1
+kind: Pipeline
+metadata:
+  name: sum-three-pipeline
+spec:
+  params:
+    - name: first
+      description: the first operand
+    - name: second
+      description: the second operand
+    - name: third
+      description: the third operand
+  tasks:
+    - name: first-add
+      taskRef:
+        name: add-task
+      params:
+        - name: first
+          value: $(params.first)
+        - name: second
+          value: $(params.second)
+    - name: second-add
+      taskRef:
+        name: add-task
+      params:
+        - name: first
+          value: $(tasks.first-add.results.sum)
+        - name: second
+          value: $(params.third)
+  results:
+    - name: sum
+      description: the sum of all three operands
+      value: $(tasks.second-add.results.sum)
+    - name: partial-sum
+      description: the sum of first two operands
+      value: $(tasks.first-add.results.sum)
+    - name: all-sum
+      description: the sum of everything
+      value: $(tasks.second-add.results.sum)-$(tasks.first-add.results.sum)
+---
+apiVersion: tekton.dev/v1
+kind: PipelineRun
+metadata:
+  name: sum-three-pipeline-run
+spec:
+  pipelineRef:
+    name: sum-three-pipeline
+  params:
+    - name: first
+      value: "2"
+    - name: second
+      value: "10"
+    - name: third
+      value: "10"
+```
+
+## How It Works
+
+<Steps>
+  <Step title="First Task Executes">
+    The `first-add` task runs first, adding the first two parameters (2 + 10 = 12) and emitting the result.
+  </Step>
+  
+  <Step title="Second Task Uses First Task's Result">
+    The `second-add` task automatically waits for `first-add` to complete because it references its result using `$(tasks.first-add.results.sum)`. It then adds this result to the third parameter (12 + 10 = 22).
+  </Step>
+  
+  <Step title="Pipeline Results are Computed">
+    After all tasks complete, the pipeline computes its own results by referencing task results. These become available in the PipelineRun status.
+  </Step>
+</Steps>
+
+## Task Dependencies
+
+Tekton automatically creates dependencies between tasks when:
+- A task references another task's result: `$(tasks.TASK_NAME.results.RESULT_NAME)`
+- A task explicitly uses `runAfter` to specify ordering
+
+In this example, `second-add` implicitly depends on `first-add` because it uses its result.
+
+## Expected Output
+
+With the provided parameters (2, 10, 10):
+
+- `first-add` outputs: 12
+- `second-add` outputs: 22
+
+Pipeline results:
+```
+sum: 22
+partial-sum: 12
+all-sum: 22-12
+```
+
+## Key Concepts
+
+- **Pipeline**: A collection of tasks that execute in a defined order
+- **Task References**: Use `taskRef` to reference an existing task by name
+- **Implicit Dependencies**: Tasks automatically wait for tasks whose results they reference
+- **Pipeline Results**: Pipelines can aggregate results from multiple tasks
+- **Parameter Passing**: Pipeline parameters can be passed to tasks, and task results can be passed to other tasks
+
+## Next Steps
+
+- Learn about [pipelines with parameters](/examples/pipelines/pipeline-with-params)
+- See [parallel task execution](/examples/pipelines/parallel-tasks)

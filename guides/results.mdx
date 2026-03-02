@@ -1,0 +1,443 @@
+---
+title: Using Results
+description: Pass data between Tasks using results in Tekton Pipelines
+---
+
+Results allow Tasks to emit data that can be consumed by subsequent Tasks in a Pipeline. This guide shows you how to define, write, and use results effectively.
+
+## Overview
+
+Results enable Tasks to:
+
+- Output data for use by subsequent Tasks
+- Emit metadata like image digests, version numbers, or test counts
+- Pass dynamic values through a Pipeline
+- Return multiple values using arrays or objects
+
+## Defining Results
+
+Define results in the Task specification:
+
+```yaml
+apiVersion: tekton.dev/v1
+kind: Task
+metadata:
+  name: add-task
+spec:
+  params:
+    - name: first
+      description: the first operand
+    - name: second
+      description: the second operand
+  results:
+    - name: sum
+      description: the sum of the first and second operand
+    - name: difference
+      description: the difference between operands
+  steps:
+    - name: add
+      image: alpine
+      script: |
+        echo -n $(($(params.first) + $(params.second))) | tee $(results.sum.path)
+        echo -n $(($(params.first) - $(params.second))) | tee $(results.difference.path)
+```
+
+## Writing Results
+
+Write result values to the path provided by Tekton:
+
+### String Results
+
+```yaml
+steps:
+  - name: generate-version
+    image: alpine
+    script: |
+      VERSION="v1.2.3"
+      echo -n "${VERSION}" | tee $(results.version.path)
+```
+
+<Warning>
+Use `echo -n` (without newline) when writing results to avoid trailing newlines in the result value.
+</Warning>
+
+### Using Environment Variables
+
+```yaml
+steps:
+  - name: calculate
+    image: alpine
+    env:
+      - name: OP1
+        value: $(params.first)
+      - name: OP2
+        value: $(params.second)
+    command: ["/bin/sh", "-c"]
+    args:
+      - echo -n $((${OP1}+${OP2})) | tee $(results.sum.path);
+```
+
+## Array Results
+
+Define and use array results to return multiple values:
+
+### Defining Array Results
+
+```yaml
+apiVersion: tekton.dev/v1
+kind: Task
+metadata:
+  name: list-images
+spec:
+  results:
+    - name: images
+      type: array
+      description: List of built images
+  steps:
+    - name: build-images
+      image: bash
+      script: |
+        #!/usr/bin/env bash
+        image1="gcr.io/project/app@sha256:abc123"
+        image2="gcr.io/project/worker@sha256:def456"
+        image3="gcr.io/project/cron@sha256:ghi789"
+        echo -n "[\"$image1\", \"$image2\", \"$image3\"]" | tee $(results.images.path)
+```
+
+### Consuming Array Results
+
+Access array results in subsequent Tasks:
+
+```yaml
+apiVersion: tekton.dev/v1
+kind: Pipeline
+metadata:
+  name: build-and-scan
+spec:
+  tasks:
+    - name: build
+      taskRef:
+        name: list-images
+    - name: scan-all
+      params:
+        - name: images
+          value: "$(tasks.build.results.images[*])"
+      taskSpec:
+        params:
+          - name: images
+            type: array
+        steps:
+          - name: scan
+            image: bash
+            args: ["$(params.images[*])"]
+            script: |
+              for image in "$@"; do
+                echo "Scanning: $image"
+              done
+```
+
+### Accessing Individual Array Elements
+
+```yaml
+tasks:
+  - name: use-specific-image
+    params:
+      - name: first-image
+        value: "$(tasks.build.results.images[0])"
+      - name: second-image
+        value: "$(tasks.build.results.images[1])"
+```
+
+## Object Results
+
+Object results allow you to return structured data (alpha feature):
+
+```yaml
+results:
+  - name: build-info
+    type: object
+    properties:
+      image:
+        type: string
+      digest:
+        type: string
+      timestamp:
+        type: string
+```
+
+Access object properties:
+
+```yaml
+params:
+  - name: image
+    value: $(tasks.build.results.build-info.image)
+  - name: digest
+    value: $(tasks.build.results.build-info.digest)
+```
+
+<Note>
+Object results are an alpha feature. Set `enable-api-fields` to `alpha` to use them.
+</Note>
+
+## Using Results in Pipelines
+
+### Complete Pipeline Example
+
+```yaml
+apiVersion: tekton.dev/v1
+kind: Pipeline
+metadata:
+  name: sum-three-pipeline
+spec:
+  params:
+    - name: first
+      description: the first operand
+    - name: second
+      description: the second operand
+    - name: third
+      description: the third operand
+  tasks:
+    - name: first-add
+      taskRef:
+        name: add-task
+      params:
+        - name: first
+          value: $(params.first)
+        - name: second
+          value: $(params.second)
+    - name: second-add
+      taskRef:
+        name: add-task
+      params:
+        - name: first
+          value: $(tasks.first-add.results.sum)
+        - name: second
+          value: $(params.third)
+  results:
+    - name: sum
+      description: the sum of all three operands
+      value: $(tasks.second-add.results.sum)
+    - name: partial-sum
+      description: the sum of first two operands
+      value: $(tasks.first-add.results.sum)
+```
+
+### Running the Pipeline
+
+```yaml
+apiVersion: tekton.dev/v1
+kind: PipelineRun
+metadata:
+  name: sum-three-pipeline-run
+spec:
+  pipelineRef:
+    name: sum-three-pipeline
+  params:
+    - name: first
+      value: "2"
+    - name: second
+      value: "10"
+    - name: third
+      value: "10"
+```
+
+This PipelineRun will:
+1. Add 2 + 10 = 12 in `first-add`
+2. Add 12 + 10 = 22 in `second-add`
+3. Emit results: `sum=22`, `partial-sum=12`
+
+## Pipeline Results
+
+Pipelines can emit their own results based on Task results:
+
+```yaml
+apiVersion: tekton.dev/v1
+kind: Pipeline
+metadata:
+  name: build-pipeline
+spec:
+  results:
+    - name: image-url
+      description: URL of the built image
+      value: $(tasks.build.results.image)
+    - name: image-digest
+      description: Digest of the built image
+      value: $(tasks.build.results.digest)
+    - name: summary
+      description: Build summary
+      value: $(tasks.build.results.image)-$(tasks.build.results.digest)
+  tasks:
+    - name: build
+      taskRef:
+        name: build-image
+```
+
+## Results in Finally Tasks
+
+Access Task results in `finally` tasks:
+
+```yaml
+finally:
+  - name: report
+    params:
+      - name: build-result
+        value: $(tasks.build.results.image)
+      - name: test-result
+        value: $(tasks.test.results.passed)
+    taskRef:
+      name: send-notification
+```
+
+## Matrix Results
+
+When using matrix execution, access the length of results:
+
+```yaml
+tasks:
+  - name: process-matrix
+    matrix:
+      params:
+        - name: platform
+          value:
+            - linux
+            - windows
+            - macos
+    taskRef:
+      name: build-platform
+  - name: summarize
+    params:
+      - name: build-count
+        value: $(tasks.process-matrix.matrix.length)
+      - name: result-count
+        value: $(tasks.process-matrix.matrix.results.length)
+```
+
+## Best Practices
+
+### Use Descriptive Names
+
+```yaml
+results:
+  - name: image-url
+    description: Full URL of the pushed container image
+  - name: image-digest
+    description: SHA256 digest of the pushed image
+  - name: test-coverage
+    description: Code coverage percentage
+```
+
+### Keep Results Small
+
+<Warning>
+Results are stored in the TaskRun status. Keep result values reasonably small (typically under 4KB). For larger data, use Workspaces instead.
+</Warning>
+
+### Validate Results Before Use
+
+```yaml
+steps:
+  - name: validate
+    image: bash
+    script: |
+      RESULT=$(cat $(results.version.path))
+      if [[ ! $RESULT =~ ^v[0-9]+\.[0-9]+\.[0-9]+$ ]]; then
+        echo "Invalid version format: $RESULT"
+        exit 1
+      fi
+```
+
+### Use Arrays for Multiple Items
+
+```yaml
+# Good: Use array for multiple images
+results:
+  - name: images
+    type: array
+
+# Avoid: Multiple individual results
+results:
+  - name: image1
+  - name: image2
+  - name: image3
+```
+
+## Practical Examples
+
+### Building and Referencing Image Digest
+
+```yaml
+apiVersion: tekton.dev/v1
+kind: Pipeline
+metadata:
+  name: build-and-deploy
+spec:
+  tasks:
+    - name: build
+      taskSpec:
+        results:
+          - name: image-digest
+        steps:
+          - name: build-push
+            image: gcr.io/kaniko-project/executor
+            args:
+              - --destination=gcr.io/my-project/my-app
+              - --digest-file=$(results.image-digest.path)
+    - name: deploy
+      params:
+        - name: image
+          value: gcr.io/my-project/my-app@$(tasks.build.results.image-digest)
+      taskRef:
+        name: kubectl-deploy
+```
+
+### Test Result Aggregation
+
+```yaml
+tasks:
+  - name: unit-tests
+    taskSpec:
+      results:
+        - name: passed
+        - name: failed
+        - name: total
+      steps:
+        - name: test
+          image: node
+          script: |
+            npm test -- --json > test-results.json
+            PASSED=$(jq '.numPassedTests' test-results.json)
+            FAILED=$(jq '.numFailedTests' test-results.json)
+            TOTAL=$(jq '.numTotalTests' test-results.json)
+            echo -n $PASSED | tee $(results.passed.path)
+            echo -n $FAILED | tee $(results.failed.path)
+            echo -n $TOTAL | tee $(results.total.path)
+  - name: report
+    params:
+      - name: summary
+        value: "Tests: $(tasks.unit-tests.results.passed)/$(tasks.unit-tests.results.total) passed"
+```
+
+### Dynamic Task Execution
+
+```yaml
+tasks:
+  - name: detect-changes
+    taskSpec:
+      results:
+        - name: changed-services
+          type: array
+      steps:
+        - name: detect
+          image: alpine/git
+          script: |
+            SERVICES=$(git diff --name-only HEAD~1 | grep '^services/' | cut -d'/' -f2 | sort -u | jq -R . | jq -s .)
+            echo -n "$SERVICES" | tee $(results.changed-services.path)
+  - name: build-services
+    params:
+      - name: services
+        value: $(tasks.detect-changes.results.changed-services[*])
+```
+
+<Tip>
+Combine results with when expressions to create dynamic, conditional Pipelines that adapt to the data flowing through them.
+</Tip>

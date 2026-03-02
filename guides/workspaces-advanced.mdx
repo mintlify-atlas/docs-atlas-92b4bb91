@@ -1,0 +1,644 @@
+---
+title: Advanced Workspace Usage
+description: Master workspace features including subpaths, isolation, and dynamic configuration
+---
+
+Workspaces provide flexible storage for your Tasks and Pipelines. This guide covers advanced workspace patterns and techniques.
+
+## Overview
+
+Advanced workspace features include:
+
+- Using subpaths to organize workspace data
+- Isolating workspace access to specific Steps
+- Optional workspaces with conditional logic
+- Sharing workspaces across Pipeline Tasks
+- Dynamic workspace configuration
+
+## Workspace Subpaths
+
+Subpaths allow multiple Tasks to use different directories within the same workspace:
+
+### Basic Subpath Usage
+
+```yaml
+apiVersion: tekton.dev/v1
+kind: Pipeline
+metadata:
+  name: pipeline-using-different-subpaths
+spec:
+  workspaces:
+    - name: ws
+  tasks:
+    - name: writer-1
+      taskRef:
+        name: writer
+      workspaces:
+        - name: task-ws
+          workspace: ws
+          subPath: dir-1
+    - name: writer-2
+      runAfter:
+        - writer-1
+      taskRef:
+        name: writer
+      workspaces:
+        - name: task-ws
+          workspace: ws
+          subPath: dir-2
+    - name: read-all
+      runAfter:
+        - writer-2
+      taskRef:
+        name: read-both
+      workspaces:
+        - name: local-ws
+          workspace: ws
+```
+
+The Task definitions:
+
+```yaml
+apiVersion: tekton.dev/v1
+kind: Task
+metadata:
+  name: writer
+spec:
+  workspaces:
+    - name: task-ws
+  steps:
+    - name: write
+      image: ubuntu
+      script: echo bar > $(workspaces.task-ws.path)/foo
+---
+apiVersion: tekton.dev/v1
+kind: Task
+metadata:
+  name: read-both
+spec:
+  params:
+    - name: directory1
+    - name: directory2
+  workspaces:
+    - name: local-ws
+  steps:
+    - name: read-1
+      image: ubuntu
+      script: cat $(workspaces.local-ws.path)/$(params.directory1)/foo | grep bar
+    - name: read-2
+      image: ubuntu
+      script: cat $(workspaces.local-ws.path)/$(params.directory2)/foo | grep bar
+```
+
+Running the Pipeline:
+
+```yaml
+apiVersion: tekton.dev/v1
+kind: PipelineRun
+metadata:
+  generateName: pr-different-path-
+spec:
+  pipelineRef:
+    name: pipeline-using-different-subpaths
+  workspaces:
+    - name: ws
+      volumeClaimTemplate:
+        spec:
+          accessModes:
+            - ReadWriteOnce
+          resources:
+            requests:
+              storage: 1Gi
+```
+
+### Parameterized Subpaths
+
+Use parameters to dynamically configure subpaths:
+
+```yaml
+apiVersion: tekton.dev/v1
+kind: Pipeline
+metadata:
+  name: parameterized-subpath
+spec:
+  params:
+    - name: environment
+      type: string
+  workspaces:
+    - name: shared-workspace
+  tasks:
+    - name: build
+      params:
+        - name: env
+          value: $(params.environment)
+      workspaces:
+        - name: source
+          workspace: shared-workspace
+          subPath: $(params.environment)/build
+      taskRef:
+        name: build-task
+```
+
+<Tip>
+Use parameterized subpaths to organize builds by environment, branch, or other dynamic criteria.
+</Tip>
+
+## Isolated Workspaces
+
+Limit workspace access to specific Steps within a Task:
+
+```yaml
+apiVersion: tekton.dev/v1
+kind: PipelineRun
+metadata:
+  generateName: isolated-workspaces-
+spec:
+  workspaces:
+    - name: ssh-credentials
+      secret:
+        secretName: test-ssh-credentials
+  pipelineSpec:
+    workspaces:
+      - name: ssh-credentials
+    tasks:
+      - name: test-isolation
+        workspaces:
+          - name: creds
+            workspace: ssh-credentials
+        taskSpec:
+          workspaces:
+            - name: creds
+          steps:
+            # This step has access to credentials
+            - name: use-creds
+              image: alpine
+              script: |
+                if [ ! -d /creds ] ; then
+                  echo "unable to access creds"
+                  exit 1
+                fi
+                # Use credentials
+                ls /creds
+              workspaces:
+                - name: creds
+                  mountPath: /creds
+            # This step cannot see credentials
+            - name: no-creds
+              image: alpine
+              script: |
+                if [ -d /workspace/creds ] ; then
+                  echo "this step should not be able to see creds"
+                  exit 255
+                fi
+                echo "Credentials properly isolated"
+```
+
+<Note>
+By default, workspaces are mounted to all Steps. Use the `workspaces` field in a Step to override the default mount path or isolate access.
+</Note>
+
+## Optional Workspaces
+
+Make workspaces optional and handle their presence conditionally:
+
+```yaml
+apiVersion: tekton.dev/v1
+kind: Task
+metadata:
+  name: run-js
+spec:
+  workspaces:
+    - name: prelaunch
+      optional: true
+      description: Optional prelaunch script workspace
+    - name: launch
+      description: Required launch script workspace
+  steps:
+    - name: run
+      image: node:lts-alpine
+      script: |
+        #!/usr/bin/env sh
+        if [ "$(workspaces.prelaunch.bound)" == "true" ] ; then
+          echo "Running prelaunch script"
+          node "$(workspaces.prelaunch.path)/init.js"
+        else
+          echo "Skipping prelaunch - workspace not provided"
+        fi
+        
+        if [ -f "$(workspaces.launch.path)/main.js" ] ; then
+          node "$(workspaces.launch.path)/main.js"
+        else
+          echo "Error: missing main.js file in launch workspace!"
+          exit 1
+        fi
+```
+
+Using the Task in a Pipeline:
+
+```yaml
+apiVersion: tekton.dev/v1
+kind: PipelineRun
+metadata:
+  generateName: optional-workspaces-
+spec:
+  workspaces:
+    - name: launch
+      configMap:
+        name: example-source-code-configmap
+    # prelaunch workspace intentionally omitted
+  pipelineSpec:
+    workspaces:
+      - name: launch
+      - name: prelaunch
+        optional: true
+    tasks:
+      - name: print-bound-state
+        taskRef:
+          name: echo
+        params:
+          - name: values
+            value:
+              - "Was a prelaunch workspace provided? "
+              - "$(workspaces.prelaunch.bound)"
+              - "Was a launch workspace provided? "
+              - "$(workspaces.launch.bound)"
+      - name: run-js
+        workspaces:
+          - name: prelaunch
+            workspace: prelaunch
+          - name: launch
+            workspace: launch
+        taskRef:
+          name: run-js
+```
+
+### Workspace Bound Variable
+
+Check if an optional workspace was provided:
+
+```yaml
+script: |
+  if [ "$(workspaces.cache.bound)" == "true" ]; then
+    echo "Using cache from $(workspaces.cache.path)"
+    cp -r $(workspaces.cache.path)/* .
+  else
+    echo "No cache workspace provided"
+  fi
+```
+
+## Workspace Propagation
+
+Share a Pipeline workspace across multiple Tasks:
+
+```yaml
+apiVersion: tekton.dev/v1
+kind: Pipeline
+metadata:
+  name: workspace-propagation
+spec:
+  workspaces:
+    - name: shared-data
+  tasks:
+    - name: fetch-source
+      workspaces:
+        - name: output
+          workspace: shared-data
+      taskRef:
+        name: git-clone
+    - name: run-tests
+      runAfter:
+        - fetch-source
+      workspaces:
+        - name: source
+          workspace: shared-data
+      taskRef:
+        name: golang-test
+    - name: build
+      runAfter:
+        - run-tests
+      workspaces:
+        - name: source
+          workspace: shared-data
+      taskRef:
+        name: golang-build
+```
+
+<Note>
+Each Task can map the Pipeline workspace to a different workspace name within the Task.
+</Note>
+
+## Workspace Types
+
+### PersistentVolumeClaim
+
+Use existing PVC:
+
+```yaml
+workspaces:
+  - name: source
+    persistentVolumeClaim:
+      claimName: my-pvc
+```
+
+Create PVC dynamically:
+
+```yaml
+workspaces:
+  - name: source
+    volumeClaimTemplate:
+      spec:
+        accessModes:
+          - ReadWriteOnce
+        resources:
+          requests:
+            storage: 1Gi
+        storageClassName: fast-ssd
+```
+
+### ConfigMap
+
+```yaml
+workspaces:
+  - name: config
+    configMap:
+      name: my-config
+      items:
+        - key: config.yaml
+          path: app-config.yaml
+```
+
+### Secret
+
+```yaml
+workspaces:
+  - name: credentials
+    secret:
+      secretName: my-secret
+      items:
+        - key: token
+          path: .token
+```
+
+### EmptyDir
+
+```yaml
+workspaces:
+  - name: temp
+    emptyDir: {}
+```
+
+### CSI Volumes
+
+```yaml
+workspaces:
+  - name: csi-workspace
+    csi:
+      driver: secrets-store.csi.k8s.io
+      readOnly: true
+      volumeAttributes:
+        secretProviderClass: my-secret-provider
+```
+
+## Workspace Variables
+
+Access workspace metadata in your Tasks:
+
+```yaml
+steps:
+  - name: workspace-info
+    image: alpine
+    script: |
+      echo "Workspace path: $(workspaces.source.path)"
+      echo "Workspace bound: $(workspaces.source.bound)"
+      echo "PVC name: $(workspaces.source.claim)"
+      echo "Volume name: $(workspaces.source.volume)"
+```
+
+| Variable | Description |
+|----------|-------------|
+| `workspaces.name.path` | Mount path of the workspace |
+| `workspaces.name.bound` | Whether the workspace was provided |
+| `workspaces.name.claim` | PVC name (empty for other types) |
+| `workspaces.name.volume` | Volume name |
+
+## Advanced Patterns
+
+### Cache Workspace Pattern
+
+```yaml
+apiVersion: tekton.dev/v1
+kind: Pipeline
+metadata:
+  name: build-with-cache
+spec:
+  workspaces:
+    - name: cache
+      optional: true
+  tasks:
+    - name: build
+      workspaces:
+        - name: cache
+          workspace: cache
+      taskSpec:
+        workspaces:
+          - name: cache
+            optional: true
+        steps:
+          - name: restore-cache
+            image: node
+            script: |
+              if [ "$(workspaces.cache.bound)" == "true" ]; then
+                echo "Restoring from cache"
+                cp -r $(workspaces.cache.path)/node_modules . || true
+              fi
+          - name: build
+            image: node
+            script: |
+              npm install
+              npm run build
+          - name: save-cache
+            image: node
+            script: |
+              if [ "$(workspaces.cache.bound)" == "true" ]; then
+                echo "Saving to cache"
+                cp -r node_modules $(workspaces.cache.path)/
+              fi
+```
+
+### Multi-Environment Pattern
+
+```yaml
+apiVersion: tekton.dev/v1
+kind: PipelineRun
+metadata:
+  generateName: multi-env-
+spec:
+  params:
+    - name: target-env
+      value: staging
+  workspaces:
+    - name: manifests
+      persistentVolumeClaim:
+        claimName: deployment-manifests
+  pipelineSpec:
+    params:
+      - name: target-env
+    workspaces:
+      - name: manifests
+    tasks:
+      - name: deploy
+        params:
+          - name: environment
+            value: $(params.target-env)
+        workspaces:
+          - name: configs
+            workspace: manifests
+            subPath: environments/$(params.target-env)
+        taskRef:
+          name: kubectl-apply
+```
+
+### Temporary Workspace for Build Artifacts
+
+```yaml
+tasks:
+  - name: build-and-test
+    workspaces:
+      - name: source
+        workspace: source-code
+    taskSpec:
+      workspaces:
+        - name: source
+      steps:
+        - name: build
+          image: golang
+          workingDir: $(workspaces.source.path)
+          script: |
+            go build -o /tmp/app ./cmd/app
+        - name: test
+          image: golang
+          script: |
+            /tmp/app --version
+            /tmp/app --test
+```
+
+## Best Practices
+
+### Use VolumeClaimTemplates for Dynamic Storage
+
+<Tip>
+Use volumeClaimTemplate instead of creating PVCs manually. This allows Tekton to manage PVC lifecycle automatically.
+</Tip>
+
+```yaml
+workspaces:
+  - name: source
+    volumeClaimTemplate:
+      spec:
+        accessModes:
+          - ReadWriteOnce
+        resources:
+          requests:
+            storage: 1Gi
+```
+
+### Organize with Subpaths
+
+```yaml
+# Organize by purpose
+subPath: source/$(params.repo-name)
+subPath: artifacts/$(params.build-id)
+subPath: cache/npm
+subPath: logs/$(context.taskRun.name)
+```
+
+### Clean Up After Use
+
+```yaml
+finally:
+  - name: cleanup
+    workspaces:
+      - name: workspace
+        workspace: shared-workspace
+    taskSpec:
+      workspaces:
+        - name: workspace
+      steps:
+        - name: clean
+          image: alpine
+          script: |
+            rm -rf $(workspaces.workspace.path)/*
+```
+
+### Use Optional Workspaces for Flexibility
+
+```yaml
+workspaces:
+  - name: maven-cache
+    optional: true
+    description: Optional Maven cache to speed up builds
+  - name: docker-config
+    optional: true
+    description: Optional Docker config for private registries
+```
+
+### Validate Workspace Contents
+
+```yaml
+steps:
+  - name: validate
+    image: alpine
+    script: |
+      if [ ! -f "$(workspaces.source.path)/pom.xml" ]; then
+        echo "Error: pom.xml not found in workspace"
+        exit 1
+      fi
+```
+
+<Accordion title="When should I use subpaths vs separate workspaces?">
+
+Use **subpaths** when:
+- Multiple Tasks need to share a single PVC
+- You want to organize data hierarchically
+- You need to reduce PVC costs
+- Tasks write to different directories
+
+Use **separate workspaces** when:
+- Data has different lifecycle requirements
+- You need different access modes (ReadOnly vs ReadWrite)
+- Tasks require isolation for security
+- Different storage classes are needed
+
+</Accordion>
+
+<Accordion title="How do I debug workspace issues?">
+
+Common debugging steps:
+
+1. **Check workspace is bound**:
+```yaml
+script: |
+  echo "Bound: $(workspaces.name.bound)"
+  echo "Path: $(workspaces.name.path)"
+```
+
+2. **List workspace contents**:
+```yaml
+script: |
+  ls -la $(workspaces.name.path)
+```
+
+3. **Check permissions**:
+```yaml
+script: |
+  ls -ld $(workspaces.name.path)
+  id
+```
+
+4. **Verify PVC**:
+```bash
+kubectl get pvc
+kubectl describe pvc <pvc-name>
+```
+
+</Accordion>

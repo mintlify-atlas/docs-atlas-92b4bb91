@@ -1,0 +1,567 @@
+---
+title: Custom Resolver Development
+description: Build your own resolver for custom storage backends
+---
+
+Learn how to develop custom resolvers for Tekton Pipelines to integrate with proprietary storage systems or version control platforms.
+
+## What is a Resolver?
+
+A Resolver is a program that runs in a Kubernetes cluster alongside Tekton Pipelines and "resolves" requests for Tasks and Pipelines from remote locations. For example, if a user submits a PipelineRun that needs a Pipeline YAML stored in a custom storage system, your resolver would be responsible for fetching the YAML and returning it to Tekton Pipelines.
+
+This pattern allows integration with any storage backend without modifying Tekton Pipelines itself.
+
+## Prerequisites
+
+Before developing a custom resolver, you'll need:
+
+- Proficiency in Go programming
+- Understanding of Tekton Resolution concepts
+- A Kubernetes cluster running Kubernetes 1.28 or later
+- [`kubectl`](https://kubernetes.io/docs/tasks/tools/#kubectl) installed
+- [`ko`](https://github.com/google/ko) installed for building container images
+- An image registry for pushing images (or `kind.local` for local development)
+- Tekton Pipelines v0.41.0+ and remote resolvers installed
+
+## Architecture Overview
+
+A resolver consists of:
+
+1. **Go binary** - Implements the resolver logic
+2. **Kubernetes Deployment** - Runs the resolver in the cluster
+3. **Label-based routing** - Directs ResolutionRequests to your resolver
+4. **Framework integration** - Uses Tekton's resolver framework
+
+## Project Setup
+
+Create the initial directory structure:
+
+```bash
+mkdir demoresolver
+cd demoresolver
+go mod init example.com/demoresolver
+mkdir -p cmd/demoresolver
+mkdir config
+```
+
+<CardGroup cols={2}>
+  <Card title="cmd/demoresolver" icon="code">
+    Contains the resolver implementation
+  </Card>
+  <Card title="config" icon="folder">
+    Contains Kubernetes deployment manifests
+  </Card>
+</CardGroup>
+
+## Implementing the Resolver
+
+Create `cmd/demoresolver/main.go` with the following framework:
+
+### Main Entry Point
+
+<CodeGroup>
+```go Latest Framework
+package main
+
+import (
+  "context"
+  "errors"
+  "fmt"
+  neturl "net/url"
+  
+  "github.com/tektoncd/pipeline/pkg/resolution/common"
+  "github.com/tektoncd/pipeline/pkg/remoteresolution/resolver/framework"
+  pipelinev1 "github.com/tektoncd/pipeline/pkg/apis/pipeline/v1"
+  "github.com/tektoncd/pipeline/pkg/apis/resolution/v1beta1"
+  "knative.dev/pkg/injection/sharedmain"
+)
+
+func main() {
+  sharedmain.Main("controller",
+    framework.NewController(context.Background(), &resolver{}),
+  )
+}
+
+type resolver struct {}
+```
+
+```go Previous Framework (Deprecated)
+package main
+
+import (
+  "context"
+  "errors"
+  
+  "github.com/tektoncd/pipeline/pkg/resolution/common"
+  "github.com/tektoncd/pipeline/pkg/resolution/resolver/framework"
+  pipelinev1 "github.com/tektoncd/pipeline/pkg/apis/pipeline/v1"
+  "knative.dev/pkg/injection/sharedmain"
+)
+
+func main() {
+  sharedmain.Main("controller",
+    framework.NewController(context.Background(), &resolver{}),
+  )
+}
+
+type resolver struct {}
+```
+</CodeGroup>
+
+### Required Interface Methods
+
+Your resolver must implement the `framework.Resolver` interface:
+
+#### Initialize Method
+
+```go
+// Initialize sets up any dependencies needed by the resolver
+func (r *resolver) Initialize(context.Context) error {
+  return nil
+}
+```
+
+#### GetName Method
+
+```go
+// GetName returns a string name to refer to this resolver by
+func (r *resolver) GetName(context.Context) string {
+  return "Demo"
+}
+```
+
+#### GetSelector Method
+
+```go
+// GetSelector returns a map of labels to match requests to this resolver
+func (r *resolver) GetSelector(context.Context) map[string]string {
+  return map[string]string{
+    common.LabelKeyResolverType: "demo",
+  }
+}
+```
+
+This tells the framework that any `ResolutionRequest` with label `"resolution.tekton.dev/type": "demo"` should be routed to your resolver.
+
+#### Validate Method
+
+<CodeGroup>
+```go Latest Framework
+// Validate ensures that the resolution spec is valid
+func (r *resolver) Validate(ctx context.Context, req *v1beta1.ResolutionRequestSpec) error {
+  if len(req.Params) > 0 {
+    return errors.New("no params allowed")
+  }
+  url := req.URL
+  u, err := neturl.ParseRequestURI(url)
+  if err != nil {
+    return err
+  }
+  if u.Scheme != "demoscheme" {
+    return fmt.Errorf("invalid scheme. want %s, got %s", "demoscheme", u.Scheme)
+  }
+  if u.Path == "" {
+    return errors.New("empty path")
+  }
+  return nil
+}
+```
+
+```go Previous Framework (Deprecated)
+// ValidateParams ensures params from a request are valid
+func (r *resolver) ValidateParams(ctx context.Context, params []pipelinev1.Param) error {
+  if len(params) > 0 {
+    return errors.New("no params allowed")
+  }
+  return nil
+}
+```
+</CodeGroup>
+
+#### Resolve Method
+
+<CodeGroup>
+```go Latest Framework
+// Resolve fetches the resource from your storage backend
+func (r *resolver) Resolve(ctx context.Context, req *v1beta1.ResolutionRequestSpec) (framework.ResolvedResource, error) {
+  return &myResolvedResource{}, nil
+}
+```
+
+```go Previous Framework (Deprecated)
+// Resolve fetches the resource from your storage backend
+func (r *resolver) Resolve(ctx context.Context, params []pipelinev1.Param) (framework.ResolvedResource, error) {
+  return &myResolvedResource{}, nil
+}
+```
+</CodeGroup>
+
+### Implementing ResolvedResource
+
+Create a type that implements `framework.ResolvedResource`:
+
+```go
+// Hard-coded pipeline for demonstration
+const pipeline = `
+apiVersion: tekton.dev/v1beta1
+kind: Pipeline
+metadata:
+  name: my-pipeline
+spec:
+  tasks:
+  - name: hello-world
+    taskSpec:
+      steps:
+      - image: alpine:3.15.1
+        script: |
+          echo "hello world"
+`
+
+// myResolvedResource wraps the data to return to Pipelines
+type myResolvedResource struct {}
+
+// Data returns the bytes of the resolved resource
+func (*myResolvedResource) Data() []byte {
+  return []byte(pipeline)
+}
+
+// Annotations returns any metadata needed alongside the data
+func (*myResolvedResource) Annotations() map[string]string {
+  return nil
+}
+
+// RefSource returns source reference for provenance tracking
+func (*myResolvedResource) RefSource() *pipelinev1.RefSource {
+  return nil
+}
+```
+
+### Best Practice: Implementing RefSource
+
+For supply chain security (Tekton Chains integration), implement `RefSource()`:
+
+```go
+func (*myResolvedResource) RefSource() *pipelinev1.RefSource {
+  return &pipelinev1.RefSource{
+    URI: "https://github.com/user/example",
+    Digest: map[string]string{
+      "sha1": "aeb957601cf41c012be462827053a21a420befca",
+    },
+    EntryPoint: "foo/bar/task.yaml",
+  }
+}
+```
+
+<CardGroup cols={3}>
+  <Card title="URI" icon="link">
+    Source location of the resource
+  </Card>
+  <Card title="Digest" icon="fingerprint">
+    Hash of the resource content
+  </Card>
+  <Card title="EntryPoint" icon="file">
+    Path to the specific resource
+  </Card>
+</CardGroup>
+
+## Deployment Configuration
+
+Create `config/demo-resolver-deployment.yaml`:
+
+```yaml
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: demoresolver
+  namespace: tekton-pipelines-resolvers
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app: demoresolver
+  template:
+    metadata:
+      labels:
+        app: demoresolver
+    spec:
+      affinity:
+        podAntiAffinity:
+          preferredDuringSchedulingIgnoredDuringExecution:
+          - podAffinityTerm:
+              labelSelector:
+                matchLabels:
+                  app: demoresolver
+              topologyKey: kubernetes.io/hostname
+            weight: 100
+      serviceAccountName: tekton-pipelines-resolvers
+      containers:
+      - name: controller
+        image: ko://example.com/demoresolver/cmd/demoresolver
+        resources:
+          requests:
+            cpu: 100m
+            memory: 100Mi
+          limits:
+            cpu: 1000m
+            memory: 1000Mi
+        ports:
+        - name: metrics
+          containerPort: 9090
+        env:
+        - name: SYSTEM_NAMESPACE
+          valueFrom:
+            fieldRef:
+              fieldPath: metadata.namespace
+        - name: CONFIG_LOGGING_NAME
+          value: config-logging
+        - name: CONFIG_OBSERVABILITY_NAME
+          value: config-observability
+        - name: METRICS_DOMAIN
+          value: tekton.dev/resolution
+        securityContext:
+          allowPrivilegeEscalation: false
+          readOnlyRootFilesystem: true
+          runAsNonRoot: true
+          capabilities:
+            drop:
+            - all
+```
+
+## Building and Deploying
+
+Install dependencies:
+
+```bash
+go mod tidy
+```
+
+Verify the code compiles:
+
+```bash
+go build -o /dev/null ./cmd/demoresolver
+```
+
+Deploy to Kubernetes using `ko`:
+
+```bash
+ko apply -f ./config/demo-resolver-deployment.yaml
+```
+
+Verify deployment:
+
+```bash
+kubectl get deployments -n tekton-pipelines-resolvers
+```
+
+Expected output:
+```
+NAME          READY   UP-TO-DATE   AVAILABLE   AGE
+controller    1/1     1            1           2d21h
+demoresolver  1/1     1            1           91s
+webhook       1/1     1            1           2d21h
+```
+
+## Testing Your Resolver
+
+Create `test-request.yaml`:
+
+```yaml
+apiVersion: resolution.tekton.dev/v1beta1
+kind: ResolutionRequest
+metadata:
+  name: test-request
+  labels:
+    resolution.tekton.dev/type: demo
+```
+
+Submit the request:
+
+```bash
+kubectl apply -f ./test-request.yaml && kubectl get --watch resolutionrequests
+```
+
+Expected output:
+```
+resolutionrequest.resolution.tekton.dev/test-request created
+NAME           SUCCEEDED   REASON
+test-request   True
+```
+
+View the resolved resource:
+
+```bash
+kubectl get resolutionrequest test-request -o jsonpath="{.status.data}" | base64 -d
+```
+
+You should see the hard-coded pipeline YAML.
+
+## Using in PipelineRuns
+
+Test your resolver with a real PipelineRun:
+
+```yaml
+apiVersion: tekton.dev/v1beta1
+kind: PipelineRun
+metadata:
+  name: demo-pipeline-run
+spec:
+  pipelineRef:
+    resolver: demo
+```
+
+## Advanced Topics
+
+### Accepting Parameters
+
+Modify the `Validate` and `Resolve` methods to accept parameters:
+
+<CodeGroup>
+```go Latest Framework
+func (r *resolver) Validate(ctx context.Context, req *v1beta1.ResolutionRequestSpec) error {
+  for _, param := range req.Params {
+    if param.Name == "resource-name" {
+      if param.Value.StringVal == "" {
+        return errors.New("resource-name cannot be empty")
+      }
+    }
+  }
+  return nil
+}
+
+func (r *resolver) Resolve(ctx context.Context, req *v1beta1.ResolutionRequestSpec) (framework.ResolvedResource, error) {
+  resourceName := ""
+  for _, param := range req.Params {
+    if param.Name == "resource-name" {
+      resourceName = param.Value.StringVal
+    }
+  }
+  // Fetch resource using resourceName
+  return &myResolvedResource{name: resourceName}, nil
+}
+```
+
+```go Previous Framework (Deprecated)
+func (r *resolver) ValidateParams(ctx context.Context, params []pipelinev1.Param) error {
+  for _, param := range params {
+    if param.Name == "resource-name" {
+      if param.Value.StringVal == "" {
+        return errors.New("resource-name cannot be empty")
+      }
+    }
+  }
+  return nil
+}
+
+func (r *resolver) Resolve(ctx context.Context, params []pipelinev1.Param) (framework.ResolvedResource, error) {
+  resourceName := ""
+  for _, param := range params {
+    if param.Name == "resource-name" {
+      resourceName = param.Value.StringVal
+    }
+  }
+  // Fetch resource using resourceName
+  return &myResolvedResource{name: resourceName}, nil
+}
+```
+</CodeGroup>
+
+### Adding Configuration
+
+Create a ConfigMap for resolver settings:
+
+```yaml
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: demo-resolver-config
+  namespace: tekton-pipelines-resolvers
+data:
+  default-timeout: "5m"
+  api-endpoint: "https://api.example.com"
+```
+
+### Error Handling
+
+Return descriptive errors to help users troubleshoot:
+
+```go
+func (r *resolver) Resolve(ctx context.Context, req *v1beta1.ResolutionRequestSpec) (framework.ResolvedResource, error) {
+  resource, err := fetchFromBackend(ctx, req)
+  if err != nil {
+    if errors.Is(err, ErrNotFound) {
+      return nil, fmt.Errorf("resource not found: %w", err)
+    }
+    if errors.Is(err, ErrUnauthorized) {
+      return nil, fmt.Errorf("authentication failed: check credentials: %w", err)
+    }
+    return nil, fmt.Errorf("failed to fetch resource: %w", err)
+  }
+  return resource, nil
+}
+```
+
+## Example: Real-World Resolver
+
+For a production-ready example, see the [Git Resolver source code](https://github.com/tektoncd/pipeline/tree/main/pkg/resolution/resolver/git/).
+
+## Next Steps
+
+<CardGroup cols={2}>
+  <Card title="Expand Resolve()" icon="code">
+    Implement fetching from your actual storage backend
+  </Card>
+  <Card title="Add Configuration" icon="sliders">
+    Create ConfigMaps for resolver settings
+  </Card>
+  <Card title="Implement Caching" icon="database">
+    Add caching for frequently accessed resources
+  </Card>
+  <Card title="Add Authentication" icon="lock">
+    Implement authentication for protected backends
+  </Card>
+</CardGroup>
+
+## Resolver Template
+
+For a complete resolver template to get started quickly, visit the [resolver-template](https://github.com/tektoncd/pipeline/tree/main/docs/resolver-template) in the Tekton Pipeline repository.
+
+## Framework Differences
+
+<Warning>
+The previous framework (using `pkg/resolution/resolver/framework`) is deprecated. New resolvers should use `pkg/remoteresolution/resolver/framework`.
+</Warning>
+
+### Key Changes
+
+| Previous Framework | Latest Framework |
+|-------------------|------------------|
+| `ValidateParams(params []Param)` | `Validate(req *ResolutionRequestSpec)` |
+| `Resolve(params []Param)` | `Resolve(req *ResolutionRequestSpec)` |
+| Parameters only | Full request spec with URL support |
+
+## Best Practices
+
+<CardGroup cols={2}>
+  <Card title="Validate Inputs" icon="check-circle">
+    Always validate parameters and URLs thoroughly
+  </Card>
+  <Card title="Return Provenance" icon="shield">
+    Implement RefSource() for supply chain security
+  </Card>
+  <Card title="Handle Errors" icon="warning">
+    Provide clear, actionable error messages
+  </Card>
+  <Card title="Use Timeouts" icon="clock">
+    Respect the global 1-minute timeout limit
+  </Card>
+  <Card title="Secure Credentials" icon="key">
+    Store API tokens in Kubernetes secrets
+  </Card>
+  <Card title="Test Thoroughly" icon="flask">
+    Test with various inputs and edge cases
+  </Card>
+</CardGroup>
+
+<Tip>
+Start with a simple hard-coded resolver and gradually add features like parameter handling, authentication, and caching.
+</Tip>

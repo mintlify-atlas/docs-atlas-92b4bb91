@@ -1,0 +1,95 @@
+---
+title: "Task with Workspaces"
+description: "Using workspaces to share data between steps and provide storage"
+---
+
+Workspaces provide a way to share data between steps and to access external storage volumes. This example demonstrates optional workspaces.
+
+## Example
+
+```yaml
+apiVersion: tekton.dev/v1
+kind: TaskRun
+metadata:
+  generateName: optional-workspaces-
+spec:
+  workspaces:
+  - name: source-code
+    emptyDir: {}
+  taskSpec:
+    workspaces:
+    - name: source-code
+      optional: true
+    - name: extra-config
+      optional: true
+    steps:
+    - name: check-workspaces
+      image: mirror.gcr.io/alpine
+      script: |
+        if [ "$(workspaces.source-code.bound)" == "true" ]; then
+          printf "Source code workspace was provided at %s!\n" "$(workspaces.source-code.path)"
+        fi
+        if [ "$(workspaces.extra-config.bound)" == "true" ]; then
+          printf "Unexpected extra configuration mounted at %s\n" "$(workspaces.extra-config.path)"
+          exit 1
+        fi
+```
+
+## How It Works
+
+<Steps>
+  <Step title="Declare Workspaces in Task">
+    The task declares two optional workspaces: `source-code` and `extra-config`. The `optional: true` flag means the task can run even if these workspaces aren't provided.
+  </Step>
+  
+  <Step title="Provide Workspaces in TaskRun">
+    The TaskRun provides only the `source-code` workspace, backed by an `emptyDir` volume. The `extra-config` workspace is intentionally not provided.
+  </Step>
+  
+  <Step title="Check Workspace Availability">
+    The step uses `$(workspaces.NAME.bound)` to check if a workspace was provided. This allows the task to behave differently based on what's available.
+  </Step>
+  
+  <Step title="Access Workspace Path">
+    When a workspace is bound, you can access its mount path using `$(workspaces.NAME.path)`.
+  </Step>
+</Steps>
+
+## Workspace Variables
+
+Tekton provides several variables for each workspace:
+
+- `$(workspaces.NAME.path)` - The filesystem path where the workspace is mounted
+- `$(workspaces.NAME.bound)` - "true" if the workspace was provided, "false" otherwise
+- `$(workspaces.NAME.volume)` - The name of the volume backing the workspace
+
+## Workspace Types
+
+Workspaces can be backed by different volume types:
+
+- **emptyDir**: Temporary storage that exists only for the TaskRun
+- **persistentVolumeClaim**: Persistent storage that survives across runs
+- **configMap**: Read-only configuration data
+- **secret**: Read-only sensitive data
+
+## Expected Output
+
+```
+Source code workspace was provided at /workspace/source-code!
+```
+
+The task succeeds because:
+1. The `source-code` workspace is provided and detected
+2. The `extra-config` workspace is not provided (as expected)
+
+## Key Concepts
+
+- **Workspaces**: Named volumes that can be mounted into task steps
+- **Optional Workspaces**: Tasks can declare workspaces as optional using `optional: true`
+- **Workspace Binding**: The process of providing a volume for a workspace at runtime
+- **Shared Storage**: All steps in a task share the same workspace mounts
+
+## Next Steps
+
+- See [workspace usage in pipelines](/examples/pipelines/simple-pipeline)
+- Learn about [task results](/examples/tasks/task-with-results)

@@ -1,80 +1,340 @@
 ---
-title: "Quickstart"
-description: "Start building awesome documentation in minutes"
+title: Quick Start
+description: Create your first Tekton Task and Pipeline in minutes
 ---
 
-## Get started in three steps
+This guide walks you through creating and running your first Tekton Task and Pipeline. You'll learn the fundamentals by building working examples.
 
-Get your documentation site running locally and make your first customization.
+## Prerequisites
 
-### Step 1: Set up your local environment
+Before starting, make sure you have:
 
-<AccordionGroup>
-  <Accordion icon="copy" title="Clone your docs locally">
-    During the onboarding process, you created a GitHub repository with your docs content if you didn't already have one. You can find a link to this repository in your [dashboard](https://dashboard.mintlify.com).
-    
-    To clone the repository locally so that you can make and preview changes to your docs, follow the [Cloning a repository](https://docs.github.com/en/repositories/creating-and-managing-repositories/cloning-a-repository) guide in the GitHub docs.
-  </Accordion>
-  <Accordion icon="rectangle-terminal" title="Start the preview server">
-    1. Install the Mintlify CLI: `npm i -g mint`
-    2. Navigate to your docs directory and run: `mint dev`
-    3. Open `http://localhost:3000` to see your docs live!
-    
-    <Tip>Your preview updates automatically as you edit files.</Tip>
-  </Accordion>
-</AccordionGroup>
+- Tekton Pipelines installed on your cluster ([installation guide](/installation))
+- `kubectl` configured to access your cluster
+- Basic familiarity with Kubernetes concepts
 
-### Step 2: Deploy your changes
+## Understanding Tasks and TaskRuns
 
-<AccordionGroup>
-  <Accordion icon="github" title="Install our GitHub app">
-    Install the Mintlify GitHub app from your [dashboard](https://dashboard.mintlify.com/settings/organization/github-app).
-    
-    Our GitHub app automatically deploys your changes to your docs site, so you don't need to manage deployments yourself.
-</Accordion>
-<Accordion icon="palette" title="Update your site name and colors">
-    For a first change, let's update the name and colors of your docs site.
+A **Task** defines a series of steps that execute in order. A **TaskRun** instantiates and executes a Task. Think of Tasks as templates and TaskRuns as instances.
 
-    1. Open `docs.json` in your editor.
-    2. Change the `"name"` field to your project name.
-    3. Update the `"colors"` to match your brand.
-    4. Save and see your changes instantly at `http://localhost:3000`.
+## Your First Task
 
-    <Tip>Try changing the primary color to see an immediate difference!</Tip>
-  </Accordion>
-</AccordionGroup>
+Let's create a simple Task that prints the current date in two formats.
 
-### Step 3: Go live
+### Create the TaskRun
 
-<Accordion icon="rocket" title="Publish your docs">
-  1. Commit and push your changes.
-  2. Your docs will update and be live in moments!
-</Accordion>
+Create a file named `print-date-taskrun.yaml`:
 
-## Next steps
-
-Now that you have your docs running, explore these key features:
-
-<CardGroup cols={2}>
-
-<Card title="Write Content" icon="pen-to-square" href="/essentials/markdown">
-  Learn MDX syntax and start writing your documentation.
-</Card>
-
-<Card title="Customize style" icon="palette" href="/essentials/settings">
-  Make your docs match your brand perfectly.
-</Card>
-
-<Card title="Add code examples" icon="square-code" href="/essentials/code">
-  Include syntax-highlighted code blocks.
-</Card>
-
-<Card title="API documentation" icon="code" href="/api-reference/introduction">
-  Auto-generate API docs from OpenAPI specs.
-</Card>
-
-</CardGroup>
+```yaml print-date-taskrun.yaml
+apiVersion: tekton.dev/v1
+kind: TaskRun
+metadata:
+  generateName: print-date-
+spec:
+  taskSpec:
+    description: |
+      A simple task that prints the date.
+    results:
+      - name: current-date-unix-timestamp
+        description: The current date in unix timestamp format
+      - name: current-date-human-readable
+        description: The current date in human readable format
+    steps:
+      - name: print-date-unix-timestamp
+        image: mirror.gcr.io/bash
+        script: |
+          #!/usr/bin/env bash
+          date +%s | tee $(results.current-date-unix-timestamp.path)
+      - name: print-date-human-readable
+        image: mirror.gcr.io/bash
+        script: |
+          #!/usr/bin/env bash
+          date | tee $(results.current-date-human-readable.path)
+```
 
 <Note>
-  **Need help?** See our [full documentation](https://mintlify.com/docs) or join our [community](https://mintlify.com/community).
+  The `generateName` field creates a unique name with a random suffix (e.g., `print-date-abc123`). This is useful for creating multiple TaskRuns from the same definition.
 </Note>
+
+### Run the Task
+
+Apply the TaskRun to your cluster:
+
+```bash
+kubectl create -f print-date-taskrun.yaml
+```
+
+### View the Results
+
+Check the TaskRun status:
+
+```bash
+kubectl get taskrun
+```
+
+You should see:
+
+```
+NAME                SUCCEEDED   REASON      STARTTIME   COMPLETIONTIME
+print-date-abc123   True        Succeeded   30s         25s
+```
+
+View the detailed logs:
+
+```bash
+# Get the TaskRun name
+TASKRUN_NAME=$(kubectl get taskrun -o jsonpath='{.items[0].metadata.name}')
+
+# View logs from the first step
+kubectl logs $TASKRUN_NAME --container=step-print-date-unix-timestamp
+
+# View logs from the second step
+kubectl logs $TASKRUN_NAME --container=step-print-date-human-readable
+```
+
+<Info>
+  Each step in a Task runs in its own container. The steps execute sequentially in the order defined.
+</Info>
+
+## Adding Parameters
+
+Let's create a Task that accepts parameters for more flexibility.
+
+Create `echo-message-task.yaml`:
+
+```yaml echo-message-task.yaml
+apiVersion: tekton.dev/v1
+kind: Task
+metadata:
+  name: echo-message
+spec:
+  params:
+  - name: MESSAGE
+    type: string
+    default: "Hello World"
+  steps:
+    - name: echo
+      image: mirror.gcr.io/ubuntu
+      command:
+        - echo
+      args:
+        - "$(params.MESSAGE)"
+```
+
+Apply the Task:
+
+```bash
+kubectl apply -f echo-message-task.yaml
+```
+
+Now create a TaskRun that uses this Task with a custom parameter:
+
+```yaml echo-taskrun.yaml
+apiVersion: tekton.dev/v1
+kind: TaskRun
+metadata:
+  name: echo-hello-tekton
+spec:
+  taskRef:
+    name: echo-message
+  params:
+    - name: MESSAGE
+      value: "Hello from Tekton Pipelines!"
+```
+
+Run it:
+
+```bash
+kubectl create -f echo-taskrun.yaml
+kubectl logs echo-hello-tekton --container=step-echo
+```
+
+## Your First Pipeline
+
+Pipelines chain multiple Tasks together. Let's create a Pipeline that uses our `echo-message` Task twice.
+
+### Create the Pipeline
+
+Create `greeting-pipeline.yaml`:
+
+```yaml greeting-pipeline.yaml
+apiVersion: tekton.dev/v1
+kind: PipelineRun
+metadata:
+  name: greeting-pipeline-run
+spec:
+  pipelineSpec:
+    params:
+      - name: MORNING_GREETINGS
+        description: "morning greetings, default is Good Morning!"
+        type: string
+        default: "Good Morning!"
+      - name: NIGHT_GREETINGS
+        description: "Night greetings, default is Good Night!"
+        type: string
+        default: "Good Night!"
+    tasks:
+      # Task to display morning greetings
+      - name: echo-good-morning
+        taskRef:
+          name: echo-message
+        params:
+          - name: MESSAGE
+            value: $(params.MORNING_GREETINGS)
+      # Task to display night greetings
+      - name: echo-good-night
+        taskRef:
+          name: echo-message
+        params:
+          - name: MESSAGE
+            value: $(params.NIGHT_GREETINGS)
+  params:
+    - name: MORNING_GREETINGS
+      value: "Good Morning, Bob!"
+    - name: NIGHT_GREETINGS
+      value: "Good Night, Bob!"
+```
+
+### Run the Pipeline
+
+Apply the PipelineRun:
+
+```bash
+kubectl create -f greeting-pipeline.yaml
+```
+
+### Monitor Pipeline Execution
+
+Watch the PipelineRun status:
+
+```bash
+kubectl get pipelinerun greeting-pipeline-run
+```
+
+View detailed information:
+
+```bash
+kubectl describe pipelinerun greeting-pipeline-run
+```
+
+View logs from individual tasks:
+
+```bash
+# Morning greeting task
+kubectl logs -l tekton.dev/pipelineTask=echo-good-morning --container=step-echo
+
+# Night greeting task
+kubectl logs -l tekton.dev/pipelineTask=echo-good-night --container=step-echo
+```
+
+<Note>
+  By default, Pipeline tasks run in parallel unless you specify dependencies with `runAfter`. In this example, both greeting tasks run simultaneously.
+</Note>
+
+## Using Scripts in Steps
+
+For more complex logic, use the `script` field instead of `command` and `args`:
+
+```yaml script-example.yaml
+apiVersion: tekton.dev/v1
+kind: TaskRun
+metadata:
+  generateName: script-example-
+spec:
+  taskSpec:
+    params:
+    - name: PARAM
+      default: param-value
+    steps:
+    - name: bash-script
+      image: mirror.gcr.io/ubuntu
+      env:
+      - name: FOO
+        value: "example value"
+      script: |
+        #!/usr/bin/env bash
+        set -euxo pipefail
+        echo "Hello from Bash!"
+        echo "FOO is ${FOO}"
+        echo "PARAM is $(params.PARAM)"
+        for i in {1..5}; do
+          echo "Line $i"
+        done
+```
+
+Run it:
+
+```bash
+kubectl create -f script-example.yaml
+```
+
+<Warning>
+  Always include `set -e` in bash scripts to ensure the step fails if any command fails. Use `set -euxo pipefail` for better debugging output.
+</Warning>
+
+## Key Concepts Recap
+
+<AccordionGroup>
+  <Accordion title="Tasks vs TaskRuns">
+    - **Task**: A reusable template defining steps, parameters, and results
+    - **TaskRun**: An execution instance of a Task with specific parameter values
+    - Tasks can be embedded in TaskRuns (`taskSpec`) or referenced by name (`taskRef`)
+  </Accordion>
+  
+  <Accordion title="Pipelines vs PipelineRuns">
+    - **Pipeline**: A reusable workflow definition that orchestrates multiple Tasks
+    - **PipelineRun**: An execution instance of a Pipeline
+    - PipelineRuns can embed Pipeline specs or reference named Pipelines
+  </Accordion>
+  
+  <Accordion title="Parameters">
+    - Define inputs to Tasks and Pipelines with type checking
+    - Support default values and descriptions
+    - Reference parameters using `$(params.PARAM_NAME)` syntax
+    - Types include: `string`, `array`, and `object`
+  </Accordion>
+  
+  <Accordion title="Results">
+    - Tasks can output results that other Tasks consume
+    - Write results to `$(results.RESULT_NAME.path)`
+    - Pipelines can pass results between Tasks and emit final results
+  </Accordion>
+</AccordionGroup>
+
+## Next Steps
+
+Now that you've created your first Tasks and Pipeline, explore more advanced features:
+
+<CardGroup cols={2}>
+  <Card title="Working with Workspaces" icon="folder" href="/workspaces">
+    Share data between Tasks using Workspaces and persistent volumes
+  </Card>
+  <Card title="Task Results" icon="output" href="/task-results">
+    Pass data between Tasks using results and parameters
+  </Card>
+  <Card title="Pipeline Dependencies" icon="diagram-project" href="/pipelines">
+    Control task execution order with runAfter and when expressions
+  </Card>
+  <Card title="Official Examples" icon="code" href="https://github.com/tektoncd/pipeline/tree/main/examples">
+    Browse 100+ examples covering real-world CI/CD scenarios
+  </Card>
+</CardGroup>
+
+## Cleaning Up
+
+Remove the resources created in this tutorial:
+
+```bash
+# Delete TaskRuns
+kubectl delete taskrun --all
+
+# Delete PipelineRuns
+kubectl delete pipelinerun greeting-pipeline-run
+
+# Delete the Task
+kubectl delete task echo-message
+```
+
+<Info>
+  TaskRuns and PipelineRuns are retained after completion so you can inspect logs and results. Clean them up periodically or configure automatic cleanup using Tekton's retention policies.
+</Info>

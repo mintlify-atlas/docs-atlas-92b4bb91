@@ -1,0 +1,88 @@
+---
+title: Tekton Pipelines
+description: Cloud Native CI/CD with Kubernetes-style resources
+---
+
+<img src="/images/tekton-hero.png" alt="Tekton Pipelines" />
+
+## Build Cloud Native CI/CD Pipelines
+
+Tekton Pipelines is a Kubernetes extension that provides k8s-style resources for declaring CI/CD-style pipelines. Once installed, Tekton becomes available via kubectl and API calls, just like pods and other Kubernetes resources.
+
+Tekton is open-source and part of the [CD Foundation](https://cd.foundation/), a [Linux Foundation](https://www.linuxfoundation.org/projects/) project.
+
+## Why Tekton?
+
+<CardGroup cols={3}>
+  <Card title="Cloud Native" icon="cloud">
+    Runs on Kubernetes, uses containers as building blocks, and treats clusters as first-class resources
+  </Card>
+  <Card title="Decoupled" icon="puzzle-piece">
+    One Pipeline can deploy to any k8s cluster. Tasks run in isolation and resources swap easily between runs
+  </Card>
+  <Card title="Typed" icon="code">
+    Typed resources enable easy swapping of implementations (e.g., kaniko vs buildkit for image builds)
+  </Card>
+</CardGroup>
+
+## Core Concepts
+
+Tekton defines Kubernetes Custom Resources that act as building blocks for your CI/CD pipelines:
+
+<AccordionGroup>
+  <Accordion title="Task" icon="check">
+    Defines a series of steps which launch specific build or delivery tools that ingest specific inputs and produce specific outputs.
+  </Accordion>
+  <Accordion title="TaskRun" icon="play">
+    Instantiates a Task for execution with specific inputs, outputs, and execution parameters. Can be invoked standalone or as part of a Pipeline.
+  </Accordion>
+  <Accordion title="Pipeline" icon="diagram-project">
+    Defines a series of Tasks that accomplish a specific build or delivery goal. Can be triggered by an event or invoked from a PipelineRun.
+  </Accordion>
+  <Accordion title="PipelineRun" icon="rocket">
+    Instantiates a Pipeline for execution with specific inputs, outputs, and execution parameters.
+  </Accordion>
+</AccordionGroup>
+
+## Get Started
+
+<CardGroup cols={2}>
+  <Card title="Installation" icon="download" href="/installation">
+    Install Tekton Pipelines on your Kubernetes cluster in minutes
+  </Card>
+  <Card title="Quick Start" icon="bolt" href="/quickstart">
+    Create your first Task and Pipeline with a hands-on tutorial
+  </Card>
+  <Card title="Tasks" icon="list-check" href="/tasks">
+    Learn how to create and run Tasks with steps, parameters, and results
+  </Card>
+  <Card title="Pipelines" icon="diagram-project" href="/pipelines">
+    Build complex workflows by chaining Tasks together
+  </Card>
+</CardGroup>
+
+## Kubernetes Version Requirements
+
+Tekton Pipelines requires specific minimum Kubernetes versions:
+
+<Note>
+  **Latest releases require:**
+  - v0.59.x and later: Kubernetes 1.27+
+  - v0.61.x and later: Kubernetes 1.28+
+</Note>
+
+For production deployments, use the [Tekton Operator](https://github.com/tektoncd/operator) to install, upgrade, and manage Tekton projects.
+
+## What's Next?
+
+<Steps>
+  <Step title="Install Tekton">
+    Follow the [installation guide](/installation) to set up Tekton Pipelines on your cluster
+  </Step>
+  <Step title="Build Your First Task">
+    Complete the [quickstart tutorial](/quickstart) to create a working Task and TaskRun
+  </Step>
+  <Step title="Explore Examples">
+    Browse real-world examples and patterns in the official [Tekton examples repository](https://github.com/tektoncd/pipeline/tree/main/examples)
+  </Step>
+</Steps>

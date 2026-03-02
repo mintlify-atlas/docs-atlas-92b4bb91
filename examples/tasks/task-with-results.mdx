@@ -1,0 +1,104 @@
+---
+title: "Task with Results"
+description: "Emitting results from tasks to pass data to other tasks"
+---
+
+Task results allow you to output data from a task that can be consumed by other tasks in a pipeline or accessed after the task completes.
+
+## Example
+
+```yaml
+apiVersion: tekton.dev/v1
+kind: TaskRun
+metadata:
+  generateName: print-date-
+spec:
+  taskSpec:
+    description: |
+      A simple task that prints the date.
+    results:
+      - name: current-date-unix-timestamp
+        description: The current date in unix timestamp format
+      - name: current-date-human-readable
+        description: The current date in human readable format
+    steps:
+      - name: print-date-unix-timestamp
+        image: mirror.gcr.io/bash
+        script: |
+          #!/usr/bin/env bash
+          date +%s | tee $(results.current-date-unix-timestamp.path)
+      - name: print-date-human-readable
+        image: mirror.gcr.io/bash
+        script: |
+          #!/usr/bin/env bash
+          date | tee $(results.current-date-human-readable.path)
+```
+
+## How It Works
+
+<Steps>
+  <Step title="Declare Results">
+    The task declares two results in the `results` section, each with a name and description. This tells Tekton to create files where result values can be written.
+  </Step>
+  
+  <Step title="Write to Result Files">
+    Each step writes its output to a result file using `$(results.NAME.path)`. The `tee` command both prints the output and writes it to the result file.
+  </Step>
+  
+  <Step title="Results are Captured">
+    After the task completes, Tekton reads the content from the result files and makes them available in the TaskRun status.
+  </Step>
+</Steps>
+
+## Writing Results
+
+To write a result value:
+
+```bash
+echo -n "result value" > $(results.result-name.path)
+```
+
+Or use `tee` to both display and write:
+
+```bash
+date | tee $(results.result-name.path)
+```
+
+<Note>
+  Result values must be plain text strings. Tekton will trim any trailing newlines from result values.
+</Note>
+
+## Expected Output
+
+The task will output something like:
+
+```
+1709308800
+Mon Mar  2 12:00:00 UTC 2026
+```
+
+After execution, you can view the results:
+
+```bash
+tkn taskrun describe print-date-xxxxx
+```
+
+Results section will show:
+```
+RESULTS
+NAME                              VALUE
+current-date-unix-timestamp       1709308800
+current-date-human-readable       Mon Mar  2 12:00:00 UTC 2026
+```
+
+## Key Concepts
+
+- **Results**: Named output values from a task
+- **Result Path**: Use `$(results.NAME.path)` to get the file path where the result should be written
+- **Result Size**: Results have a maximum size (typically 4KB for string results)
+- **Result Usage**: Results can be passed to other tasks in a pipeline using `$(tasks.TASK_NAME.results.RESULT_NAME)`
+
+## Next Steps
+
+- See how to [use results in pipelines](/examples/pipelines/pipeline-with-results)
+- Learn about [passing results between tasks](/examples/real-world/multi-stage-pipeline)

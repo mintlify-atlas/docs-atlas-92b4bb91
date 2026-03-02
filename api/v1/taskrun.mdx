@@ -1,0 +1,214 @@
+---
+title: TaskRun
+description: API reference for the TaskRun v1 resource
+---
+
+A TaskRun represents a single execution of a Task. TaskRuns are how the steps specified in a Task are executed.
+
+## Resource Definition
+
+<ParamField path="apiVersion" type="string" required>
+  `tekton.dev/v1`
+</ParamField>
+
+<ParamField path="kind" type="string" required>
+  `TaskRun`
+</ParamField>
+
+<ParamField path="metadata" type="ObjectMeta" required>
+  Standard Kubernetes metadata.
+</ParamField>
+
+<ParamField path="spec" type="TaskRunSpec" required>
+  Defines the desired state of the TaskRun.
+</ParamField>
+
+<ParamField path="status" type="TaskRunStatus">
+  Defines the observed state of the TaskRun.
+</ParamField>
+
+## TaskRunSpec
+
+<ParamField path="taskRef" type="TaskRef">
+  Reference to the Task to execute. Mutually exclusive with `taskSpec`.
+
+  <Expandable title="TaskRef fields">
+    <ParamField path="name" type="string">
+      Name of the Task in the same namespace.
+    </ParamField>
+
+    <ParamField path="resolver" type="string">
+      Name of the resolver to use for remote resolution (e.g., "git", "hub").
+    </ParamField>
+
+    <ParamField path="params" type="[]Param">
+      Parameters for remote resolution.
+    </ParamField>
+  </Expandable>
+</ParamField>
+
+<ParamField path="taskSpec" type="TaskSpec">
+  Inline Task specification. Mutually exclusive with `taskRef`.
+
+  Can be disabled by setting the `disable-inline-spec` feature flag.
+</ParamField>
+
+<ParamField path="params" type="[]Param">
+  Parameters to pass to the Task.
+
+  See [Parameter Types](/api/types/params) for details.
+</ParamField>
+
+<ParamField path="serviceAccountName" type="string">
+  ServiceAccount to use for running the TaskRun.
+</ParamField>
+
+<ParamField path="workspaces" type="[]WorkspaceBinding">
+  Workspace bindings for the TaskRun.
+
+  See [Workspace Types](/api/types/workspaces) for details.
+</ParamField>
+
+<ParamField path="timeout" type="Duration">
+  Time after which the TaskRun times out. Defaults to 1 hour.
+
+  Format: Go duration string (e.g., "1h30m", "90m")
+</ParamField>
+
+<ParamField path="retries" type="integer" default={0}>
+  Number of times to retry on task failure.
+</ParamField>
+
+<ParamField path="status" type="string">
+  Used for cancelling a TaskRun.
+
+  Values:
+  - `TaskRunCancelled` - Cancel the TaskRun
+</ParamField>
+
+<ParamField path="statusMessage" type="string">
+  Human-readable status message for cancellation.
+</ParamField>
+
+<ParamField path="computeResources" type="ResourceRequirements">
+  Compute resources to use for this TaskRun.
+</ParamField>
+
+<ParamField path="podTemplate" type="PodTemplate">
+  Pod-specific configuration for the TaskRun's pod.
+</ParamField>
+
+## TaskRunStatus
+
+<ResponseField name="conditions" type="[]Condition">
+  Conditions describe the current state of the TaskRun.
+
+  <Expandable title="Condition fields">
+    <ResponseField name="type" type="string">
+      Type of condition. Primary type: `Succeeded`
+    </ResponseField>
+
+    <ResponseField name="status" type="string">
+      Status of the condition:
+      - `True` - TaskRun succeeded
+      - `False` - TaskRun failed
+      - `Unknown` - TaskRun is running
+    </ResponseField>
+
+    <ResponseField name="reason" type="string">
+      Machine-readable reason for the condition.
+
+      Values include: `Succeeded`, `Failed`, `Running`, `TaskRunCancelled`, `TaskRunTimeout`
+    </ResponseField>
+
+    <ResponseField name="message" type="string">
+      Human-readable message describing the condition.
+    </ResponseField>
+  </Expandable>
+</ResponseField>
+
+<ResponseField name="startTime" type="Time">
+  Time when the TaskRun started executing.
+</ResponseField>
+
+<ResponseField name="completionTime" type="Time">
+  Time when the TaskRun completed.
+</ResponseField>
+
+<ResponseField name="podName" type="string">
+  Name of the pod executing the TaskRun.
+</ResponseField>
+
+<ResponseField name="steps" type="[]StepState">
+  State of each Step in the Task.
+
+  <Expandable title="StepState fields">
+    <ResponseField name="name" type="string">
+      Name of the Step.
+    </ResponseField>
+
+    <ResponseField name="container" type="string">
+      Name of the Step's container.
+    </ResponseField>
+
+    <ResponseField name="imageID" type="string">
+      Image ID of the container.
+    </ResponseField>
+
+    <ResponseField name="waiting" type="ContainerStateWaiting">
+      Details if the container is waiting.
+    </ResponseField>
+
+    <ResponseField name="running" type="ContainerStateRunning">
+      Details if the container is running.
+    </ResponseField>
+
+    <ResponseField name="terminated" type="ContainerStateTerminated">
+      Details if the container has terminated.
+
+      <Expandable title="Terminated fields">
+        <ResponseField name="exitCode" type="integer">
+          Exit code from the container.
+        </ResponseField>
+
+        <ResponseField name="reason" type="string">
+          Reason for termination.
+        </ResponseField>
+
+        <ResponseField name="startedAt" type="Time">
+          When the container started.
+        </ResponseField>
+
+        <ResponseField name="finishedAt" type="Time">
+          When the container finished.
+        </ResponseField>
+      </Expandable>
+    </ResponseField>
+  </Expandable>
+</ResponseField>
+
+<ResponseField name="results" type="[]TaskRunResult">
+  Results produced by the TaskRun.
+
+  See [Result Types](/api/types/results) for details.
+</ResponseField>
+
+<ResponseField name="taskSpec" type="TaskSpec">
+  The resolved Task specification that was executed.
+</ResponseField>
+
+## Example
+
+```yaml
+apiVersion: tekton.dev/v1
+kind: TaskRun
+metadata:
+  name: example-taskrun
+spec:
+  taskRef:
+    name: example-task
+  params:
+    - name: message
+      value: "Hello from TaskRun"
+  timeout: 10m
+```

@@ -1,0 +1,416 @@
+---
+title: TaskRuns
+description: TaskRun resource documentation for Tekton Pipelines
+---
+
+A `TaskRun` allows you to instantiate and execute a [Task](/concepts/tasks) on-cluster. A `Task` specifies one or more `Steps` that execute container images and each container image performs a specific piece of build work.
+
+## Overview
+
+A `TaskRun` executes the `Steps` in the `Task` in the order they are specified until all `Steps` have executed successfully or a failure occurs.
+
+## TaskRun Configuration
+
+A `TaskRun` definition supports the following fields:
+
+### Required Fields
+
+<ParamField path="apiVersion" type="string" required>
+  Specifies the API version, for example `tekton.dev/v1` or `tekton.dev/v1beta1`.
+</ParamField>
+
+<ParamField path="kind" type="string" required>
+  Identifies this resource object as a `TaskRun` object.
+</ParamField>
+
+<ParamField path="metadata" type="object" required>
+  Specifies the metadata that uniquely identifies the TaskRun, such as a `name`.
+</ParamField>
+
+<ParamField path="spec" type="object" required>
+  Specifies the configuration for the TaskRun.
+</ParamField>
+
+<ParamField path="spec.taskRef" type="object">
+  Specifies the `Task` that the TaskRun will execute (use either `taskRef` or `taskSpec`).
+</ParamField>
+
+<ParamField path="spec.taskSpec" type="object">
+  Embeds the `Task` definition directly in the TaskRun (use either `taskRef` or `taskSpec`).
+</ParamField>
+
+### Optional Fields
+
+<ParamField path="spec.serviceAccountName" type="string">
+  Specifies a ServiceAccount object that provides custom credentials for executing the TaskRun.
+</ParamField>
+
+<ParamField path="spec.params" type="array">
+  Specifies the desired execution parameters for the Task.
+</ParamField>
+
+<ParamField path="spec.timeout" type="string">
+  Specifies the timeout before the TaskRun fails.
+</ParamField>
+
+<ParamField path="spec.podTemplate" type="object">
+  Specifies a Pod template to use as the starting point for configuring the Pods for the Task.
+</ParamField>
+
+<ParamField path="spec.workspaces" type="array">
+  Specifies the physical volumes to use for the Workspaces declared by a Task.
+</ParamField>
+
+<ParamField path="spec.retries" type="integer">
+  Specifies the number of times to retry the TaskRun execution when it fails.
+</ParamField>
+
+<ParamField path="spec.debug" type="object">
+  Specifies any breakpoints and debugging configuration for the Task execution.
+</ParamField>
+
+## Specifying the Target Task
+
+### Using taskRef
+
+To specify the `Task` you want to execute in your `TaskRun`, use the `taskRef` field:
+
+```yaml
+spec:
+  taskRef:
+    name: read-task
+```
+
+### Using taskSpec
+
+You can also embed the desired `Task` definition directly in the `TaskRun` using the `taskSpec` field:
+
+```yaml
+spec:
+  taskSpec:
+    workspaces:
+    - name: source
+    steps:
+      - name: build-and-push
+        image: gcr.io/kaniko-project/executor:v0.17.1
+        workingDir: $(workspaces.source.path)
+        env:
+          - name: "DOCKER_CONFIG"
+            value: "/tekton/home/.docker/"
+        command:
+          - /kaniko/executor
+        args:
+          - --destination=gcr.io/my-project/gohelloworld
+```
+
+## Specifying Parameters
+
+If a `Task` has parameters, you can use the `params` field to specify their values:
+
+```yaml
+spec:
+  params:
+    - name: flags
+      value: -someflag
+    - name: url
+      value: https://github.com/tektoncd/pipeline.git
+```
+
+<Note>
+If a parameter does not have an implicit default value, you must explicitly set its value.
+</Note>
+
+### Propagated Parameters
+
+When using an inlined `taskSpec`, parameters from the parent `TaskRun` will be available to the `Task` without needing to be explicitly defined:
+
+```yaml
+apiVersion: tekton.dev/v1
+kind: TaskRun
+metadata:
+  generateName: hello-
+spec:
+  params:
+    - name: message
+      value: "hello world!"
+  taskSpec:
+    steps:
+    - name: default
+      image: ubuntu
+      script: |
+        echo $(params.message)
+```
+
+## Specifying Workspaces
+
+If a `Task` specifies one or more `Workspaces`, you must map those `Workspaces` to the corresponding physical volumes in your `TaskRun` definition:
+
+```yaml
+workspaces:
+  - name: myworkspace
+    persistentVolumeClaim:
+      claimName: mypvc
+    subPath: my-subdir
+```
+
+### Workspace Volume Sources
+
+<Tabs>
+  <Tab title="PersistentVolumeClaim">
+    ```yaml
+    workspaces:
+      - name: myworkspace
+        persistentVolumeClaim:
+          claimName: mypvc
+    ```
+  </Tab>
+  <Tab title="emptyDir">
+    ```yaml
+    workspaces:
+      - name: myworkspace
+        emptyDir: {}
+    ```
+  </Tab>
+  <Tab title="ConfigMap">
+    ```yaml
+    workspaces:
+      - name: myworkspace
+        configMap:
+          name: my-configmap
+    ```
+  </Tab>
+  <Tab title="Secret">
+    ```yaml
+    workspaces:
+      - name: myworkspace
+        secret:
+          secretName: my-secret
+    ```
+  </Tab>
+</Tabs>
+
+## Configuring Failure Timeout
+
+You can use the `timeout` field to set the `TaskRun's` desired timeout value. The timeout is a `duration` conforming to Go's ParseDuration format. For example, valid values are `1h30m`, `1h`, `1m`, and `60s`.
+
+```yaml
+spec:
+  timeout: "5m"
+  taskRef:
+    name: build-push
+```
+
+If a `TaskRun` runs longer than its timeout value, the pod associated with the `TaskRun` will be deleted.
+
+<Warning>
+When a TaskRun times out, the logs of the TaskRun are not preserved as the pod is deleted.
+</Warning>
+
+## Specifying Retries
+
+You can use the `retries` field to set how many times you want to retry on a failed TaskRun. All TaskRun failures are retriable except for `Cancellation`.
+
+```yaml
+spec:
+  retries: 3
+  taskRef:
+    name: flaky-task
+```
+
+For a retriable `TaskRun`, when an error occurs:
+- The error status is archived in `status.RetriesStatus`
+- The `Succeeded` condition is updated with status `Unknown` and reason `ToBeRetried`
+- `status.StartTime`, `status.PodName` and `status.Results` are unset to trigger another retry attempt
+
+## Specifying ServiceAccount
+
+You can execute the `Task` in your `TaskRun` with a specific set of credentials by specifying a `ServiceAccount` object name:
+
+```yaml
+spec:
+  serviceAccountName: build-bot
+  taskRef:
+    name: build-push
+```
+
+## Pod Template
+
+You can specify a Pod template configuration that will serve as the configuration starting point for the Pod in which the container images specified in your Task will execute:
+
+```yaml
+apiVersion: tekton.dev/v1
+kind: TaskRun
+metadata:
+  name: mytaskrun
+spec:
+  taskRef:
+    name: mytask
+  podTemplate:
+    securityContext:
+      runAsNonRoot: true
+      runAsUser: 1001
+    volumes:
+      - name: my-cache
+        persistentVolumeClaim:
+          claimName: my-volume-claim
+```
+
+## TaskRun Status
+
+The `status` field defines the observed state of TaskRun.
+
+### Status Fields
+
+<ParamField path="status.conditions" type="array">
+  Contains the latest observations of the TaskRun's state.
+</ParamField>
+
+<ParamField path="status.podName" type="string">
+  Name of the pod containing the containers responsible for executing this task's steps.
+</ParamField>
+
+<ParamField path="status.startTime" type="string">
+  The time at which the TaskRun began executing, in RFC3339 format.
+</ParamField>
+
+<ParamField path="status.completionTime" type="string">
+  The time at which the TaskRun finished executing, in RFC3339 format.
+</ParamField>
+
+<ParamField path="status.results" type="array">
+  List of results written out by the task's containers.
+</ParamField>
+
+<ParamField path="status.steps" type="array">
+  Contains the state of each step container.
+</ParamField>
+
+### Status Example
+
+```yaml
+status:
+  completionTime: "2019-08-12T18:22:57Z"
+  conditions:
+    - lastTransitionTime: "2019-08-12T18:22:57Z"
+      message: All Steps have completed executing
+      reason: Succeeded
+      status: "True"
+      type: Succeeded
+  podName: status-taskrun-pod
+  startTime: "2019-08-12T18:22:51Z"
+  steps:
+    - container: step-hello
+      imageID: docker-pullable://busybox@sha256:895ab622e92e18d6b461d671081757af7dbaa3b00e3e28e12505af7817f73649
+      name: hello
+      terminated:
+        containerID: docker://d5a54f5bbb8e7a6fd3bc7761b78410403244cf4c9c5822087fb0209bf59e3621
+        exitCode: 0
+        finishedAt: "2019-08-12T18:22:56Z"
+        reason: Completed
+        startedAt: "2019-08-12T18:22:54Z"
+```
+
+### Overall Status
+
+| status | reason | message | completionTime | Description |
+|--------|--------|---------|----------------|-------------|
+| Unknown | Started | n/a | No | TaskRun has just been picked up by the controller |
+| Unknown | Running | n/a | No | TaskRun has been validated and started to perform its work |
+| True | Succeeded | n/a | Yes | TaskRun completed successfully |
+| False | Failed | n/a | Yes | TaskRun failed because one of the steps failed |
+| False | TaskRunTimeout | n/a | Yes | TaskRun timed out |
+
+## Cancelling a TaskRun
+
+To cancel a `TaskRun` that's currently executing, update its status to mark it as cancelled:
+
+```yaml
+apiVersion: tekton.dev/v1
+kind: TaskRun
+metadata:
+  name: go-example-git
+spec:
+  # ...
+  status: "TaskRunCancelled"
+```
+
+<Warning>
+When you cancel a TaskRun, the running pod associated with that TaskRun is deleted. This means that the logs of the TaskRun are not preserved.
+</Warning>
+
+## Debugging a TaskRun
+
+### Breakpoint on Failure
+
+TaskRuns can be halted on failure for troubleshooting:
+
+```yaml
+spec:
+  debug:
+    breakpoints:
+      onFailure: "enabled"
+```
+
+### Debug Environment
+
+After accessing the container environment, you can use the following scripts in the `/tekton/debug/scripts` directory:
+
+- `debug-continue` - Mark the step as a success and exit the breakpoint
+- `debug-fail-continue` - Mark the step as a failure and exit the breakpoint
+
+## Example TaskRun with Referenced Task
+
+```yaml
+apiVersion: tekton.dev/v1
+kind: Task
+metadata:
+  name: read-task
+spec:
+  workspaces:
+  - name: input
+  steps:
+    - name: readme
+      image: ubuntu
+      script: cat $(workspaces.input.path)/README.md
+---
+apiVersion: tekton.dev/v1
+kind: TaskRun
+metadata:
+  name: read-repo-run
+spec:
+  taskRef:
+    name: read-task
+  workspaces:
+  - name: input
+    persistentVolumeClaim:
+      claimName: mypvc
+    subPath: my-subdir
+```
+
+## Example TaskRun with Embedded Task
+
+```yaml
+apiVersion: tekton.dev/v1
+kind: TaskRun
+metadata:
+  name: build-push-task-run-2
+spec:
+  workspaces:
+  - name: source
+    persistentVolumeClaim:
+      claimName: my-pvc
+  taskSpec:
+    workspaces:
+    - name: source
+    steps:
+      - name: build-and-push
+        image: gcr.io/kaniko-project/executor:v0.17.1
+        workingDir: $(workspaces.source.path)
+        env:
+          - name: "DOCKER_CONFIG"
+            value: "/tekton/home/.docker/"
+        command:
+          - /kaniko/executor
+        args:
+          - --destination=gcr.io/my-project/gohelloworld
+```

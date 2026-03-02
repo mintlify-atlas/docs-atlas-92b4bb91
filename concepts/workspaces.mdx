@@ -1,0 +1,381 @@
+---
+title: Workspaces
+description: Workspaces concept for sharing data in Tekton Pipelines
+---
+
+`Workspaces` allow `Tasks` to declare parts of the filesystem that need to be provided at runtime by `TaskRuns`. A `TaskRun` can make these parts of the filesystem available in many ways.
+
+## Overview
+
+`Workspaces` are similar to `Volumes` except that they allow a `Task` author to defer to users and their `TaskRuns` when deciding which class of storage to use.
+
+### Key Purposes
+
+`Workspaces` can serve the following purposes:
+
+- Storage of inputs and/or outputs
+- Sharing data among `Tasks`
+- A mount point for credentials held in `Secrets`
+- A mount point for configurations held in `ConfigMaps`
+- A mount point for common tools shared by an organization
+- A cache of build artifacts that speed up jobs
+
+## Workspaces in Tasks and TaskRuns
+
+`Tasks` specify where a `Workspace` resides on disk for its `Steps`. At runtime, a `TaskRun` provides the specific details of the `Volume` that is mounted into that `Workspace`.
+
+This separation of concerns allows for a lot of flexibility. For example, in isolation, a single `TaskRun` might simply provide an `emptyDir` volume that mounts quickly and disappears at the end of the run. In a more complex system, however, a `TaskRun` might use a `PersistentVolumeClaim` which is pre-populated with data for the `Task` to process.
+
+## Workspaces in Pipelines and PipelineRuns
+
+A `Pipeline` can use `Workspaces` to show how storage will be shared through its `Tasks`. For example, `Task` A might clone a source repository onto a `Workspace` and `Task` B might compile the code that it finds in that `Workspace`.
+
+`PipelineRuns` provide the specific `Volume` information to use for the `Workspaces` used by each `Pipeline`. `PipelineRuns` have the added responsibility of ensuring that whatever `Volume` type they provide can be safely and correctly shared across multiple `Tasks`.
+
+## Optional Workspaces
+
+Both `Tasks` and `Pipelines` can declare a `Workspace` "optional". When an optional `Workspace` is declared the `TaskRun` or `PipelineRun` may omit a `Workspace` Binding for that `Workspace`. The `Task` or `Pipeline` behaviour may change when the Binding is omitted.
+
+### Use Cases
+
+- A `Task` may optionally accept credentials to run authenticated commands
+- A `Pipeline` may accept optional configuration that changes the linting or compilation parameters used
+- An optional build cache may be provided to speed up compile times
+
+## Using Workspaces in Tasks
+
+To configure one or more `Workspaces` in a `Task`, add a `workspaces` list with each entry using the following fields:
+
+<ParamField path="name" type="string" required>
+  A **unique** string identifier that can be used to refer to the workspace.
+</ParamField>
+
+<ParamField path="description" type="string">
+  An informative string describing the purpose of the Workspace.
+</ParamField>
+
+<ParamField path="readOnly" type="boolean" default="false">
+  A boolean declaring whether the Task will write to the Workspace.
+</ParamField>
+
+<ParamField path="optional" type="boolean" default="false">
+  A boolean indicating whether a TaskRun can omit the Workspace.
+</ParamField>
+
+<ParamField path="mountPath" type="string">
+  A path to a location on disk where the workspace will be available to Steps. Defaults to `/workspace/<name>`.
+</ParamField>
+
+### Example Task with Workspace
+
+```yaml
+spec:
+  steps:
+    - name: write-message
+      image: ubuntu
+      script: |
+        #!/usr/bin/env bash
+        set -xe
+        if [ "$(workspaces.messages.bound)" == "true" ] ; then
+          echo hello! > $(workspaces.messages.path)/message
+        fi
+  workspaces:
+    - name: messages
+      description: |
+        The folder where we write the message to. If no workspace
+        is provided then the message will not be written.
+      optional: true
+      mountPath: /custom/path/relative/to/root
+```
+
+## Workspace Variables in Tasks
+
+The following variables make information about `Workspaces` available to `Tasks`:
+
+- `$(workspaces.<name>.path)` - Specifies the path to a Workspace
+- `$(workspaces.<name>.bound)` - Either `true` or `false`, specifies whether a workspace was bound
+- `$(workspaces.<name>.claim)` - Specifies the name of the PersistentVolumeClaim used as a volume source
+- `$(workspaces.<name>.volume)` - Specifies the name of the Volume provided for a Workspace
+
+## Mapping Workspaces in Tasks to TaskRuns
+
+A `TaskRun` that executes a `Task` containing a `workspaces` list must bind those `workspaces` to actual physical `Volumes`.
+
+### TaskRun Workspace Fields
+
+<ParamField path="name" type="string" required>
+  The name of the Workspace within the Task for which the Volume is being provided.
+</ParamField>
+
+<ParamField path="subPath" type="string">
+  An optional subdirectory on the Volume to store data for that Workspace.
+</ParamField>
+
+The entry must also include one `VolumeSource`.
+
+### Example TaskRun with Workspaces
+
+```yaml
+apiVersion: tekton.dev/v1
+kind: TaskRun
+metadata:
+  generateName: custom-volume-
+spec:
+  workspaces:
+    - name: custom
+      persistentVolumeClaim:
+        claimName: my-pvc
+      subPath: my-subdir
+    - name: custom2
+      emptyDir: {}
+    - name: custom3
+      configMap:
+        name: my-configmap
+    - name: custom4
+      secret:
+        secretName: my-secret
+  taskSpec:
+    workspaces:
+    - name: custom
+    - name: custom2
+    - name: custom3
+    - name: custom4
+    steps:
+    - name: write
+      image: ubuntu
+      script: echo $(workspaces.custom.volume) > $(workspaces.custom.path)/foo
+```
+
+## Using Workspaces in Pipelines
+
+While individual `Tasks` declare the `Workspaces` they need to run, the `Pipeline` decides which `Workspaces` are shared among its `Tasks`.
+
+### Example Pipeline with Workspaces
+
+```yaml
+spec:
+  workspaces:
+    - name: pipeline-ws1
+    - name: pipeline-ws2
+      optional: true
+  tasks:
+    - name: use-ws-from-pipeline
+      taskRef:
+        name: gen-code
+      workspaces:
+        - name: output
+          workspace: pipeline-ws1
+    - name: use-ws-again
+      taskRef:
+        name: commit
+      workspaces:
+        - name: src
+          workspace: pipeline-ws1
+      runAfter:
+        - use-ws-from-pipeline
+```
+
+<Note>
+Include a `runAfter` to define the order in which Tasks write to or read from a shared Workspace.
+</Note>
+
+## Volume Sources
+
+You can only use a single type of `VolumeSource` per `Workspace` entry.
+
+### PersistentVolumeClaim
+
+#### volumeClaimTemplate
+
+Creates a new PersistentVolumeClaim for each PipelineRun or TaskRun:
+
+```yaml
+workspaces:
+  - name: myworkspace
+    volumeClaimTemplate:
+      spec:
+        accessModes:
+          - ReadWriteOnce
+        resources:
+          requests:
+            storage: 1Gi
+```
+
+#### persistentVolumeClaim
+
+References an existing PersistentVolumeClaim:
+
+```yaml
+workspaces:
+  - name: myworkspace
+    persistentVolumeClaim:
+      claimName: mypvc
+    subPath: my-subdir
+```
+
+### emptyDir
+
+Provides a temporary directory that only lives as long as the TaskRun:
+
+```yaml
+workspaces:
+  - name: myworkspace
+    emptyDir: {}
+```
+
+<Warning>
+`emptyDir` volumes are **not** suitable for sharing data among Tasks within a Pipeline.
+</Warning>
+
+### configMap
+
+References a ConfigMap volume:
+
+```yaml
+workspaces:
+  - name: myworkspace
+    configMap:
+      name: my-configmap
+```
+
+<Note>
+- `configMap` volume sources are always mounted as read-only
+- The configMap must exist prior to submitting the TaskRun
+- configMaps are size-limited to 1MB
+</Note>
+
+### secret
+
+References a Secret volume:
+
+```yaml
+workspaces:
+  - name: myworkspace
+    secret:
+      secretName: my-secret
+```
+
+<Note>
+- `secret` volume sources are always mounted as read-only
+- The secret must exist prior to submitting the TaskRun
+- secrets are size-limited to 1MB
+</Note>
+
+### projected
+
+References a projected volume:
+
+```yaml
+workspaces:
+  - name: myworkspace
+    projected:
+      sources:
+        - configMap:
+            name: my-configmap
+        - secret:
+            name: my-secret
+```
+
+<Note>
+`projected` volume sources are always mounted as read-only.
+</Note>
+
+## Specifying Workspaces in PipelineRuns
+
+For a `PipelineRun` to execute a `Pipeline` that includes one or more `Workspaces`, it needs to bind the `Workspace` names to volumes.
+
+### Example PipelineRun with Workspace
+
+```yaml
+apiVersion: tekton.dev/v1
+kind: PipelineRun
+metadata:
+  generateName: example-pipelinerun-
+spec:
+  pipelineRef:
+    name: example-pipeline
+  workspaces:
+    - name: myworkspace
+      volumeClaimTemplate:
+        spec:
+          accessModes:
+            - ReadWriteOnce
+          resources:
+            requests:
+              storage: 1Gi
+```
+
+## Access Modes and Storage Classes
+
+### Access Modes
+
+A `PersistentVolumeClaim` specifies an Access Mode. Available Access Modes are:
+
+- **ReadWriteOnce** - Most commonly available. A volume can only be mounted on one Node at a time. The Affinity Assistant helps schedule all Tasks using the same PVC to the same Node.
+- **ReadOnlyMany** - Read-only, less common in CI/CD pipelines. These volumes often need to be "prepared" with data before use.
+- **ReadWriteMany** - Least commonly available. If available to all Nodes in your cluster, you may want to disable the Affinity Assistant.
+
+### Storage Classes
+
+`PersistentVolumeClaims` specify a Storage Class for the underlying Persistent Volume. If a StorageClassName is not specified, the cluster-defined default Storage Class is used.
+
+<Warning>
+For regional clusters, be aware that default Storage Classes are typically only available to Nodes within one Availability Zone.
+</Warning>
+
+## Complete Example
+
+```yaml
+apiVersion: v1
+kind: PersistentVolumeClaim
+metadata:
+  name: shared-task-storage
+spec:
+  resources:
+    requests:
+      storage: 16Mi
+  volumeMode: Filesystem
+  accessModes:
+    - ReadWriteOnce
+---
+apiVersion: tekton.dev/v1
+kind: Pipeline
+metadata:
+  name: fetch-and-print-recipe
+spec:
+  workspaces:
+    - name: shared-data
+  tasks:
+  - name: fetch-the-recipe
+    taskSpec:
+      workspaces:
+        - name: shared-data
+      steps:
+      - name: fetch
+        image: alpine
+        script: |
+          echo "Recipe data" > $(workspaces.shared-data.path)/recipe.txt
+  - name: print-the-recipe
+    runAfter:
+      - fetch-the-recipe
+    taskSpec:
+      workspaces:
+        - name: shared-data
+      steps:
+      - name: print
+        image: alpine
+        script: |
+          cat $(workspaces.shared-data.path)/recipe.txt
+---
+apiVersion: tekton.dev/v1
+kind: PipelineRun
+metadata:
+  generateName: recipe-time-
+spec:
+  pipelineRef:
+    name: fetch-and-print-recipe
+  workspaces:
+  - name: shared-data
+    persistentVolumeClaim:
+      claimName: shared-task-storage
+```

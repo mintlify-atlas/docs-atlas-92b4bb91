@@ -1,0 +1,167 @@
+---
+title: "v1beta1 to v1 Migration"
+description: "Guide for migrating from Tekton v1beta1 to v1"
+---
+
+This guide describes the differences between `v1beta1` Tekton entities and their `v1` counterparts, including changed fields and deprecated features.
+
+## Changes to Fields
+
+In Tekton `v1`, the following fields have been changed:
+
+| Old Field | Replacement |
+| --------- | ----------- |
+| `pipelineRun.spec.Timeout` | `pipelineRun.spec.timeouts.pipeline` |
+| `pipelineRun.spec.taskRunSpecs.taskServiceAccountName` | `pipelineRun.spec.taskRunSpecs.serviceAccountName` |
+| `pipelineRun.spec.taskRunSpecs.taskPodTemplate` | `pipelineRun.spec.taskRunSpecs.podTemplate` |
+| `taskRun.status.taskResults` | `taskRun.status.results` |
+| `pipelineRun.status.pipelineResults` | `pipelineRun.status.results` |
+| `taskRun.spec.taskRef.bundle` | `taskRun.spec.taskRef.resolver` |
+| `pipelineRun.spec.pipelineRef.bundle` | `pipelineRun.spec.pipelineRef.resolver` |
+| `task.spec.resources` | Removed from `Task` |
+| `taskrun.spec.resources` | Removed from `TaskRun` |
+| `taskRun.status.cloudEvents` | Removed from `TaskRun` |
+| `taskRun.status.resourcesResult` | Removed from `TaskRun` |
+| `pipeline.spec.resources` | Removed from `Pipeline` |
+| `pipelineRun.spec.resources` | Removed from `PipelineRun` |
+| `pipelineRun.spec.serviceAccountName` | `pipelineRun.spec.taskRunTemplate.serviceAccountName` |
+| `pipelineRun.spec.podTemplate` | `pipelineRun.spec.taskRunTemplate.podTemplate` |
+| `task.spec.steps[].resources` | `task.spec.steps[].computeResources` |
+| `task.spec.stepTemplate.resources` | `task.spec.stepTemplate.computeResources` |
+| `task.spec.sidecars[].resources` | `task.spec.sidecars[].computeResources` |
+| `taskRun.spec.sidecarOverrides` | `taskRun.spec.sidecarSpecs` |
+| `taskRun.spec.stepOverrides` | `taskRun.spec.stepSpecs` |
+| `taskRun.spec.sidecarSpecs[].resources` | `taskRun.spec.sidecarSpecs[].computeResources` |
+| `taskRun.spec.stepSpecs[].resources` | `taskRun.spec.stepSpecs[].computeResources` |
+
+## Replacing Bundle References with Bundle Resolver
+
+<Warning>
+`taskRef.bundle` and `pipelineRef.bundle` have been removed from `v1`. Use the bundle resolver instead.
+</Warning>
+
+The bundle resolver in remote resolution should be used instead of `taskRun.spec.taskRef.bundle` and `pipelineRun.spec.pipelineRef.bundle`.
+
+The `enable-bundles-resolver` feature flag must be enabled to use this feature.
+
+<Tabs>
+  <Tab title="v1beta1">
+    ```yaml
+    apiVersion: tekton.dev/v1beta1
+    kind: TaskRun
+    spec:
+      taskRef:
+        name: example-task
+        bundle: python:3-alpine
+    ```
+  </Tab>
+  <Tab title="v1">
+    ```yaml
+    apiVersion: tekton.dev/v1
+    kind: TaskRun
+    spec:
+      taskRef:
+        resolver: bundles
+        params:
+        - name: bundle
+          value: python:3-alpine
+        - name: name
+          value: taskName
+        - name: kind
+          value: Task
+    ```
+  </Tab>
+</Tabs>
+
+## Replacing ClusterTask with Remote Resolution
+
+<Warning>
+`ClusterTask` is deprecated. Use the cluster resolver instead.
+</Warning>
+
+The `enable-cluster-resolver` feature flag must be enabled to use this feature.
+
+The `cluster` resolver allows `Pipeline`s, `PipelineRun`s, and `TaskRun`s to refer to `Pipeline`s and `Task`s defined in other namespaces in the cluster.
+
+<Tabs>
+  <Tab title="v1beta1">
+    ```yaml
+    apiVersion: tekton.dev/v1beta1
+    kind: TaskRun
+    metadata:
+      name: cluster-task-reference
+    spec:
+      taskRef:
+        name: example-task
+        kind: ClusterTask
+    ```
+  </Tab>
+  <Tab title="v1">
+    ```yaml
+    apiVersion: tekton.dev/v1
+    kind: TaskRun
+    metadata:
+      name: cluster-task-reference
+    spec:
+      taskRef:
+        resolver: cluster
+        params:
+        - name: kind
+          value: task
+        - name: name
+          value: example-task
+        - name: namespace
+          value: example-namespace
+    ```
+  </Tab>
+</Tabs>
+
+For more information, see [TEP-0060: Remote Resource Resolution](https://github.com/tektoncd/community/blob/main/teps/0060-remote-resource-resolution.md).
+
+## Removing PipelineResources
+
+<Warning>
+`PipelineResources` and the `resources` fields of Task, TaskRun, Pipeline, and PipelineRun have been removed.
+</Warning>
+
+Please use `Tasks` instead. For more information, see [Replacing PipelineResources](https://github.com/tektoncd/pipeline/blob/main/docs/pipelineresources.md).
+
+## Using TaskRunTemplate in PipelineRun
+
+`ServiceAccountName` and `PodTemplate` are moved to `TaskRunTemplate` so that users can specify common configuration that will apply to all TaskRuns.
+
+<Tabs>
+  <Tab title="v1beta1">
+    ```yaml
+    apiVersion: tekton.dev/v1beta1
+    kind: PipelineRun
+    metadata:
+      name: template-pr
+    spec:
+      pipelineRef:
+        name: clone-test-build
+      serviceAccountName: build
+      podTemplate:
+        securityContext:
+          fsGroup: 65532
+    ```
+  </Tab>
+  <Tab title="v1">
+    ```yaml
+    apiVersion: tekton.dev/v1
+    kind: PipelineRun
+    metadata:
+      name: template-pr
+    spec:
+      pipelineRef:
+        name: clone-test-build
+      taskRunTemplate:
+        serviceAccountName: build
+        podTemplate:
+          securityContext:
+            fsGroup: 65532
+    ```
+  </Tab>
+</Tabs>
+
+For more information, see [TEP-0119: Add taskRunTemplate in PipelineRun](https://github.com/tektoncd/community/blob/main/teps/0119-add-taskrun-template-in-pipelinerun.md).

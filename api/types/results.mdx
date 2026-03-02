@@ -1,0 +1,300 @@
+---
+title: Result Types
+description: Reference for Tekton result types and usage
+---
+
+Results allow Tasks and Pipelines to output values that can be used by subsequent Tasks or surfaced to users.
+
+## TaskResult
+
+Defines a result produced by a Task.
+
+<ParamField path="name" type="string" required>
+  Name of the result.
+
+  Must be a valid identifier.
+</ParamField>
+
+<ParamField path="type" type="ResultsType" default="string">
+  Type of the result.
+
+  Values:
+  - `string` - Single string value
+  - `array` - Array of strings
+  - `object` - Key-value pairs
+</ParamField>
+
+<ParamField path="description" type="string">
+  Human-readable description of the result.
+</ParamField>
+
+<ParamField path="properties" type="map[string]PropertySpec">
+  For object-type results, defines the structure of keys.
+
+  <Expandable title="PropertySpec">
+    <ParamField path="type" type="ResultsType">
+      Type of the property.
+    </ParamField>
+  </Expandable>
+</ParamField>
+
+<ParamField path="value" type="ResultValue">
+  Expression to retrieve the result value from a Step.
+
+  Example: `$(steps.stepName.results.resultName)`
+</ParamField>
+
+## StepResult
+
+Defines a result produced by a Step.
+
+<ParamField path="name" type="string" required>
+  Name of the step result.
+</ParamField>
+
+<ParamField path="type" type="ResultsType" default="string">
+  Type of the result: `string`, `array`, or `object`.
+</ParamField>
+
+<ParamField path="description" type="string">
+  Description of the result.
+</ParamField>
+
+<ParamField path="properties" type="map[string]PropertySpec">
+  For object results, property definitions.
+</ParamField>
+
+## TaskRunResult
+
+Represents the actual result value in a TaskRun status.
+
+<ResponseField name="name" type="string">
+  Name of the result.
+</ResponseField>
+
+<ResponseField name="type" type="ResultsType">
+  Type of the result.
+</ResponseField>
+
+<ResponseField name="value" type="ResultValue">
+  The actual value produced.
+
+  Can be string, array, or object depending on type.
+</ResponseField>
+
+## PipelineResult
+
+Defines a result produced by a Pipeline.
+
+<ParamField path="name" type="string" required>
+  Name of the pipeline result.
+</ParamField>
+
+<ParamField path="type" type="ResultsType" default="string">
+  Type of the result.
+</ParamField>
+
+<ParamField path="description" type="string">
+  Description of the result.
+</ParamField>
+
+<ParamField path="value" type="ResultValue" required>
+  Expression referencing a task result.
+
+  Example: `$(tasks.taskName.results.resultName)`
+</ParamField>
+
+## Writing Results
+
+Results are written to files in the container filesystem:
+
+### String Results
+
+```yaml
+steps:
+  - name: generate-version
+    image: bash
+    script: |
+      #!/usr/bin/env bash
+      echo -n "1.2.3" > $(results.version.path)
+results:
+  - name: version
+    description: The generated version
+```
+
+### Array Results
+
+```yaml
+steps:
+  - name: list-files
+    image: bash
+    script: |
+      #!/usr/bin/env bash
+      ls -1 | jq -R -s -c 'split("\n")[:-1]' > $(results.files.path)
+results:
+  - name: files
+    type: array
+    description: List of files
+```
+
+### Object Results
+
+```yaml
+steps:
+  - name: get-metadata
+    image: bash
+    script: |
+      #!/usr/bin/env bash
+      echo -n '{"commit":"abc123","author":"user"}' > $(results.metadata.path)
+results:
+  - name: metadata
+    type: object
+    properties:
+      commit:
+        type: string
+      author:
+        type: string
+```
+
+## Reading Results
+
+### In Subsequent Tasks
+
+Reference results from previous tasks:
+
+```yaml
+tasks:
+  - name: get-version
+    taskRef:
+      name: version-task
+  - name: build
+    taskRef:
+      name: build-task
+    params:
+      - name: version
+        value: $(tasks.get-version.results.version)
+    runAfter:
+      - get-version
+```
+
+### In Pipeline Results
+
+Surface task results as pipeline results:
+
+```yaml
+apiVersion: tekton.dev/v1
+kind: Pipeline
+spec:
+  tasks:
+    - name: build
+      taskRef:
+        name: build-image
+  results:
+    - name: image-digest
+      description: Digest of the built image
+      value: $(tasks.build.results.digest)
+```
+
+### In Finally Tasks
+
+Finally tasks can access results from DAG tasks:
+
+```yaml
+finally:
+  - name: report
+    taskRef:
+      name: send-notification
+    params:
+      - name: version
+        value: $(tasks.build.results.version)
+```
+
+## Result Size Limits
+
+Results have size limits:
+
+- **String results**: 4096 bytes (4 KB) by default
+- **Array/Object results**: Configured per installation
+
+Results exceeding limits cause task failure with reason `TaskRunResultLargerThanAllowedLimit`.
+
+## Step Results
+
+Steps can produce results that tasks aggregate:
+
+```yaml
+steps:
+  - name: step-one
+    image: bash
+    script: |
+      echo -n "value1" > $(step.results.output.path)
+    results:
+      - name: output
+  - name: step-two
+    image: bash
+    script: |
+      echo -n "value2" > $(step.results.output.path)
+    results:
+      - name: output
+  - name: combine
+    image: bash
+    script: |
+      echo "$(steps.step-one.results.output),$(steps.step-two.results.output)" \
+        > $(results.combined.path)
+results:
+  - name: combined
+    description: Combined output from both steps
+```
+
+## Example: Complete Task with Results
+
+```yaml
+apiVersion: tekton.dev/v1
+kind: Task
+metadata:
+  name: git-info
+spec:
+  params:
+    - name: url
+      type: string
+  results:
+    - name: commit
+      type: string
+      description: The current commit SHA
+    - name: branch
+      type: string
+      description: The current branch
+    - name: metadata
+      type: object
+      description: Git metadata
+      properties:
+        author:
+          type: string
+        date:
+          type: string
+  steps:
+    - name: get-info
+      image: alpine/git
+      script: |
+        #!/bin/sh
+        git clone $(params.url) repo
+        cd repo
+        
+        # Write string results
+        git rev-parse HEAD > $(results.commit.path)
+        git rev-parse --abbrev-ref HEAD > $(results.branch.path)
+        
+        # Write object result
+        echo -n "{\"author\":\"$(git log -1 --format='%an')\"," \
+          "\"date\":\"$(git log -1 --format='%ai')\"}" \
+          > $(results.metadata.path)
+```
+
+## Best Practices
+
+1. **Keep results small** - Use results for metadata, not large data
+2. **Use descriptive names** - Make result purpose clear
+3. **Document result format** - Describe expected structure
+4. **Validate result content** - Check that written values are valid
+5. **Use appropriate types** - Choose string/array/object based on data
+6. **Write atomically** - Write complete result value in one operation

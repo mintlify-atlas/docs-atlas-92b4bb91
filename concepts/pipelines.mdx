@@ -1,0 +1,406 @@
+---
+title: Pipelines
+description: Pipeline resource documentation for Tekton Pipelines
+---
+
+A `Pipeline` is a collection of `Tasks` that you define and arrange in a specific order of execution as part of your continuous integration flow.
+
+## Overview
+
+Each `Task` in a `Pipeline` executes as a `Pod` on your Kubernetes cluster. You can configure various execution conditions to fit your business needs.
+
+## Pipeline Configuration
+
+A `Pipeline` definition supports the following fields:
+
+### Required Fields
+
+<ParamField path="apiVersion" type="string" required>
+  Specifies the API version, for example `tekton.dev/v1` or `tekton.dev/v1beta1`.
+</ParamField>
+
+<ParamField path="kind" type="string" required>
+  Identifies this resource object as a `Pipeline` object.
+</ParamField>
+
+<ParamField path="metadata" type="object" required>
+  Specifies metadata that uniquely identifies the Pipeline object. For example, a `name`.
+</ParamField>
+
+<ParamField path="spec" type="object" required>
+  Specifies the configuration information for this Pipeline object.
+</ParamField>
+
+<ParamField path="spec.tasks" type="array" required>
+  Specifies the Tasks that comprise the Pipeline and the details of their execution.
+</ParamField>
+
+### Optional Fields
+
+<ParamField path="spec.params" type="array">
+  Specifies the Parameters that the Pipeline requires.
+</ParamField>
+
+<ParamField path="spec.workspaces" type="array">
+  Specifies a set of Workspaces that the Pipeline requires.
+</ParamField>
+
+<ParamField path="spec.results" type="array">
+  Specifies the location to which the Pipeline emits its execution results.
+</ParamField>
+
+<ParamField path="spec.description" type="string">
+  Holds an informative description of the Pipeline object.
+</ParamField>
+
+<ParamField path="spec.finally" type="array">
+  Specifies one or more Tasks to be executed in parallel after all other tasks have completed.
+</ParamField>
+
+## Specifying Workspaces
+
+`Workspaces` allow you to specify one or more volumes that each `Task` in the `Pipeline` requires during execution:
+
+```yaml
+spec:
+  workspaces:
+    - name: pipeline-ws1
+  tasks:
+    - name: use-ws-from-pipeline
+      taskRef:
+        name: gen-code
+      workspaces:
+        - name: output
+          workspace: pipeline-ws1
+    - name: use-ws-again
+      taskRef:
+        name: commit
+      workspaces:
+        - name: src
+          workspace: pipeline-ws1
+      runAfter:
+        - use-ws-from-pipeline
+```
+
+For more information, see the [Workspaces](/concepts/workspaces) documentation.
+
+## Specifying Parameters
+
+You can specify global parameters that you want to supply to the `Pipeline` at execution time. `Parameters` are passed to the `Pipeline` from its corresponding `PipelineRun`.
+
+### Parameter Format
+
+Parameter names:
+- Must only contain alphanumeric characters, hyphens (`-`), and underscores (`_`)
+- Must begin with a letter or an underscore (`_`)
+
+### Parameter Types
+
+Each declared parameter has a `type` field, which can be set to `array`, `string`, or `object`.
+
+### Example Pipeline with Parameters
+
+```yaml
+apiVersion: tekton.dev/v1
+kind: Pipeline
+metadata:
+  name: pipeline-with-parameters
+spec:
+  params:
+    - name: context
+      type: string
+      description: Path to context
+      default: /some/where/or/other
+    - name: flags
+      type: array
+      description: List of flags
+  tasks:
+    - name: build-skaffold-web
+      taskRef:
+        name: build-push
+      params:
+        - name: pathToDockerFile
+          value: Dockerfile
+        - name: pathToContext
+          value: "$(params.context)"
+        - name: flags
+          value: ["$(params.flags[*])"]
+```
+
+## Adding Tasks to the Pipeline
+
+Your `Pipeline` definition must reference at least one `Task`. Each `Task` within a `Pipeline` must have a valid `name` and a `taskRef` or a `taskSpec`.
+
+### Using taskRef
+
+```yaml
+tasks:
+  - name: build-the-image
+    taskRef:
+      name: build-push
+```
+
+### Using taskSpec
+
+```yaml
+tasks:
+  - name: say-hello
+    taskSpec:
+      steps:
+      - image: ubuntu
+        script: echo 'hello there'
+```
+
+## Specifying Parameters in Tasks
+
+You can provide parameters to Tasks:
+
+```yaml
+spec:
+  tasks:
+    - name: build-skaffold-web
+      taskRef:
+        name: build-push
+      params:
+        - name: pathToDockerFile
+          value: Dockerfile
+        - name: pathToContext
+          value: /workspace/examples/microservices/leeroy-web
+```
+
+## Using the runAfter Field
+
+If you need your `Tasks` to execute in a specific order within the `Pipeline`, use the `runAfter` field to indicate that a `Task` must execute after one or more other `Tasks`.
+
+```yaml
+workspaces:
+- name: source
+tasks:
+- name: test-app
+  taskRef:
+    name: make-test
+  workspaces:
+  - name: source
+    workspace: source
+- name: build-app
+  taskRef:
+    name: kaniko-build
+  runAfter:
+    - test-app
+  workspaces:
+  - name: source
+    workspace: source
+```
+
+## Using the retries Field
+
+For each `Task` in the `Pipeline`, you can specify the number of times Tekton should retry its execution when it fails:
+
+```yaml
+tasks:
+  - name: build-the-image
+    retries: 1
+    taskRef:
+      name: build-push
+```
+
+## Guard Task Execution using when Expressions
+
+To run a `Task` only when certain conditions are met, you can guard task execution using the `when` field.
+
+### Components of when Expressions
+
+| Component | Description | Syntax |
+|-----------|-------------|--------|
+| `input` | Input for the when expression | Static values or variables (parameters or results) |
+| `operator` | Represents an input's relationship to values | `in` or `notin` |
+| `values` | An array of string values | Array of static values or variables |
+
+### Examples
+
+```yaml
+tasks:
+  - name: first-create-file
+    when:
+      - input: "$(params.path)"
+        operator: in
+        values: ["README.md"]
+    taskRef:
+      name: first-create-file
+```
+
+```yaml
+tasks:
+  - name: echo-file-exists
+    when:
+      - input: "$(tasks.check-file.results.exists)"
+        operator: in
+        values: ["yes"]
+    taskRef:
+      name: echo-file-exists
+```
+
+```yaml
+tasks:
+  - name: run-lint
+    when:
+      - input: "$(workspaces.lint-config.bound)"
+        operator: in
+        values: ["true"]
+    taskRef:
+      name: lint-source
+```
+
+## Using Results
+
+Tasks can emit Results when they execute. A Pipeline can use these Results for two purposes:
+
+1. Pass the Result of a Task into the Parameters or when expressions of another
+2. Emit Results and include data from the Results of its Tasks
+
+### Passing Results Between Tasks
+
+```yaml
+tasks:
+  - name: generate-id
+    taskRef:
+      name: generate-build-id
+  - name: build-image
+    taskRef:
+      name: build-push
+    params:
+      - name: build-id
+        value: "$(tasks.generate-id.results.build-id)"
+```
+
+### Emitting Results from a Pipeline
+
+```yaml
+spec:
+  results:
+    - name: sum
+      description: The sum of the two provided integers
+      value: "$(tasks.calculate-sum.results.sum)"
+  tasks:
+    - name: calculate-sum
+      taskRef:
+        name: add-task
+```
+
+## Configuring Task Timeout
+
+You can use the `timeout` field in the `Task` spec within the `Pipeline` to set the timeout of the `TaskRun`:
+
+```yaml
+spec:
+  tasks:
+    - name: build-the-image
+      taskRef:
+        name: build-push
+      timeout: "0h1m30s"
+```
+
+## Adding Finally to the Pipeline
+
+You can specify `finally` tasks that should execute after all the `Tasks` in your `Pipeline` have completed:
+
+```yaml
+spec:
+  tasks:
+    - name: build-app
+      taskRef:
+        name: build
+    - name: test-app
+      taskRef:
+        name: test
+  finally:
+    - name: cleanup
+      taskRef:
+        name: cleanup-workspace
+    - name: notify
+      taskRef:
+        name: send-notification
+```
+
+### Finally Tasks Features
+
+- `finally` tasks are executed in parallel
+- `finally` tasks are guaranteed to execute after all pipeline tasks complete
+- `finally` tasks can access execution status of pipeline tasks
+- `finally` tasks support when expressions
+
+### Using Execution Status in Finally Tasks
+
+```yaml
+finally:
+  - name: notify-failure
+    when:
+      - input: "$(tasks.status)"
+        operator: in
+        values: ["Failed"]
+    taskRef:
+      name: send-alert
+  - name: cleanup-success
+    when:
+      - input: "$(tasks.status)"
+        operator: in
+        values: ["Succeeded"]
+    taskRef:
+      name: cleanup
+```
+
+## Complete Pipeline Example
+
+```yaml
+apiVersion: tekton.dev/v1
+kind: Pipeline
+metadata:
+  name: build-test-deploy
+spec:
+  params:
+    - name: repo-url
+      type: string
+    - name: image-name
+      type: string
+  workspaces:
+    - name: source
+    - name: docker-credentials
+  tasks:
+    - name: fetch-source
+      taskRef:
+        name: git-clone
+      params:
+        - name: url
+          value: $(params.repo-url)
+      workspaces:
+        - name: output
+          workspace: source
+    - name: run-tests
+      taskRef:
+        name: run-unit-tests
+      runAfter:
+        - fetch-source
+      workspaces:
+        - name: source
+          workspace: source
+    - name: build-image
+      taskRef:
+        name: kaniko
+      runAfter:
+        - run-tests
+      params:
+        - name: IMAGE
+          value: $(params.image-name)
+      workspaces:
+        - name: source
+          workspace: source
+        - name: dockerconfig
+          workspace: docker-credentials
+  finally:
+    - name: cleanup-workspace
+      taskRef:
+        name: cleanup
+      workspaces:
+        - name: source
+          workspace: source
+```

@@ -1,0 +1,131 @@
+---
+title: "Pipeline with Parameters"
+description: "Passing parameters from PipelineRun to Pipeline to Tasks"
+---
+
+This example demonstrates the parameter flow from PipelineRun through Pipeline to individual Tasks, including how to handle extra parameters.
+
+## Example
+
+```yaml
+apiVersion: tekton.dev/v1
+kind: Pipeline
+metadata:
+  name: pipeline-with-extra-params
+spec:
+  params:
+  - name: pl-param-x
+    type: string
+  - name: pl-param-y
+    type: string
+  tasks:
+  - name: add-params
+    taskRef:
+      name: add-params
+    params:
+    - name: a
+      value: "$(params.pl-param-x)"
+    - name: b
+      value: "$(params.pl-param-y)"
+---
+apiVersion: tekton.dev/v1
+kind: Task
+metadata:
+  name: add-params
+  annotations:
+    description: |
+      A simple task that sums the two provided integers
+spec:
+  params:
+  - name: a
+    type: string
+    description: The first integer
+  - name: b
+    type: string
+    description: The second integer
+  steps:
+  - name: sum
+    image: mirror.gcr.io/bash
+    script: |
+      #!/usr/bin/env bash
+      echo -n $(( "$(inputs.params.a)" + "$(inputs.params.b)" ))
+---
+apiVersion: tekton.dev/v1
+kind: PipelineRun
+metadata:
+  generateName: pipelinerun-with-extra-params
+spec:
+  params:
+  - name: pl-param-x
+    value: "100"
+  - name: pl-param-y
+    value: "200"
+    # the extra parameter
+  - name: pl-param-z
+    value: "300"
+  pipelineRef:
+    name: pipeline-with-extra-params
+```
+
+## How It Works
+
+<Steps>
+  <Step title="PipelineRun Provides Parameters">
+    The PipelineRun provides three parameters: `pl-param-x`, `pl-param-y`, and `pl-param-z`. Note that `pl-param-z` is extra and not used by the pipeline.
+  </Step>
+  
+  <Step title="Pipeline Accepts Two Parameters">
+    The Pipeline only declares two parameters (`pl-param-x` and `pl-param-y`). The extra parameter is ignored without causing an error.
+  </Step>
+  
+  <Step title="Pipeline Passes Parameters to Task">
+    The Pipeline maps its parameters to the task's parameters using `$(params.pl-param-x)` syntax. The pipeline parameter names don't need to match the task parameter names.
+  </Step>
+  
+  <Step title="Task Executes with Parameters">
+    The task receives the parameter values and performs the addition operation using bash arithmetic.
+  </Step>
+</Steps>
+
+## Parameter Mapping
+
+Parameters flow through three levels:
+
+```
+PipelineRun params → Pipeline params → Task params
+```
+
+Each level can have different parameter names:
+- PipelineRun: `pl-param-x` → Pipeline: `pl-param-x` → Task: `a`
+- PipelineRun: `pl-param-y` → Pipeline: `pl-param-y` → Task: `b`
+
+## Extra Parameters
+
+Tekton allows PipelineRuns to provide extra parameters that aren't used by the Pipeline. This can be useful for:
+- Forward compatibility when adding new parameters
+- Reusing PipelineRun templates across different pipelines
+- Conditional parameter usage (though not in this example)
+
+## Expected Output
+
+```
+300
+```
+
+The task adds 100 + 200 = 300.
+
+## Alternative Syntax
+
+Note that the task uses `$(inputs.params.a)` which is equivalent to the shorter `$(params.a)` syntax. Both are supported for backward compatibility.
+
+## Key Concepts
+
+- **Parameter Flow**: Parameters cascade from PipelineRun → Pipeline → Task
+- **Parameter Mapping**: Each level can rename parameters when passing them down
+- **Extra Parameters**: PipelineRuns can provide more parameters than the Pipeline declares
+- **Type Safety**: Parameters have types (string, array, object) that are validated
+
+## Next Steps
+
+- See [pipeline results](/examples/pipelines/pipeline-with-results)
+- Learn about [real-world git clone pipelines](/examples/real-world/git-clone-build)

@@ -1,0 +1,87 @@
+---
+title: "Task with Parameters"
+description: "Using parameters to make tasks reusable with different inputs"
+---
+
+Parameters make tasks reusable by allowing you to pass different values at runtime. This example shows a task with a default parameter value.
+
+## Example
+
+```yaml
+apiVersion: tekton.dev/v1
+kind: Task
+metadata:
+  # This has to be explicit instead of `generateName`, since it will be referenced
+  # by the TaskRun
+  name: example-default-task-param
+spec:
+  params:
+    - name: input
+      default: "No input provided, but that's okay!"
+  steps:
+    - name: echo-input
+      image: mirror.gcr.io/ubuntu
+      script: |
+        echo "$(params.input)"
+---
+apiVersion: tekton.dev/v1
+kind: TaskRun
+metadata:
+  generateName: default-task-params-run-
+spec:
+  taskRef:
+    name: example-default-task-param
+    # # Uncomment this block to override the default param value!
+    # params:
+    #   - name: input
+    #     value: "You can supply the param from the TaskRun if the default not what you want"
+```
+
+## How It Works
+
+<Steps>
+  <Step title="Define the Task with Parameters">
+    The Task defines a parameter named `input` with a default value. This parameter can be referenced in steps using the `$(params.input)` syntax.
+  </Step>
+  
+  <Step title="Reference the Task">
+    The TaskRun references the Task by name using `taskRef`. Because the parameter has a default value, it's optional to provide a value in the TaskRun.
+  </Step>
+  
+  <Step title="Execute with Default or Custom Value">
+    If no parameter value is provided in the TaskRun, the default value is used. You can override it by uncommenting the params section in the TaskRun spec.
+  </Step>
+</Steps>
+
+## Parameter Substitution
+
+Parameters are referenced in Task steps using the syntax:
+```
+$(params.PARAMETER_NAME)
+```
+
+Tekton replaces these placeholders with actual values before executing the step.
+
+## Expected Output
+
+**With default parameter:**
+```
+No input provided, but that's okay!
+```
+
+**With custom parameter value:**
+```
+You can supply the param from the TaskRun if the default not what you want
+```
+
+## Key Concepts
+
+- **Parameters**: Named values that can be passed to tasks
+- **Default Values**: Optional fallback values when no parameter is provided
+- **Parameter Substitution**: Using `$(params.name)` syntax to reference parameter values
+- **Task Reusability**: The same task can be run with different parameter values
+
+## Next Steps
+
+- Learn about [task results](/examples/tasks/task-with-results)
+- See how [pipelines use parameters](/examples/pipelines/pipeline-with-params)

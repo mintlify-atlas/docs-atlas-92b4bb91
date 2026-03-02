@@ -1,0 +1,256 @@
+---
+title: Parameter Types
+description: Reference for Tekton parameter types and usage
+---
+
+Parameters allow you to pass values into Tasks and Pipelines at runtime.
+
+## ParamSpec
+
+Defines a parameter declaration in a Task or Pipeline.
+
+<ParamField path="name" type="string" required>
+  Name by which the parameter is referenced.
+
+  Must be a valid identifier (alphanumeric with hyphens and underscores).
+</ParamField>
+
+<ParamField path="type" type="ParamType" default="string">
+  Type of the parameter.
+
+  Values:
+  - `string` - Single string value
+  - `array` - Array of strings
+  - `object` - Key-value pairs
+</ParamField>
+
+<ParamField path="description" type="string">
+  Human-readable description of the parameter.
+</ParamField>
+
+<ParamField path="default" type="ParamValue">
+  Default value if not supplied at runtime.
+
+  If default is set, the parameter becomes optional.
+</ParamField>
+
+<ParamField path="properties" type="map[string]PropertySpec">
+  For object-type parameters, defines the structure of allowed keys.
+
+  <Expandable title="PropertySpec fields">
+    <ParamField path="type" type="ParamType" default="string">
+      Type of this property (typically `string`).
+    </ParamField>
+  </Expandable>
+</ParamField>
+
+<ParamField path="enum" type="[]string">
+  List of allowed values for string parameters.
+
+  Requires the `enable-param-enum` feature flag.
+
+  ```yaml
+  params:
+    - name: environment
+      type: string
+      enum: ["dev", "staging", "prod"]
+  ```
+</ParamField>
+
+## Param
+
+Provides a value for a parameter.
+
+<ParamField path="name" type="string" required>
+  Name of the parameter being set.
+</ParamField>
+
+<ParamField path="value" type="ParamValue" required>
+  The value to pass to the parameter.
+</ParamField>
+
+## ParamValue
+
+A ParamValue can hold different types of values:
+
+### String Value
+
+```yaml
+params:
+  - name: message
+    value: "Hello World"
+```
+
+### Array Value
+
+```yaml
+params:
+  - name: flags
+    value:
+      - "--verbose"
+      - "--debug"
+```
+
+### Object Value
+
+```yaml
+params:
+  - name: config
+    value:
+      host: "example.com"
+      port: "8080"
+      protocol: "https"
+```
+
+## Variable Substitution
+
+Parameters can be referenced using variable substitution syntax:
+
+### String Parameters
+
+```yaml
+steps:
+  - name: echo
+    image: ubuntu
+    script: |
+      echo "$(params.message)"
+```
+
+### Array Parameters
+
+Reference the entire array:
+```yaml
+args: ["$(params.flags[*])"]
+```
+
+Reference individual elements:
+```yaml
+args: ["$(params.flags[0])", "$(params.flags[1])"]
+```
+
+### Object Parameters
+
+Access individual keys:
+```yaml
+script: |
+  curl $(params.config.protocol)://$(params.config.host):$(params.config.port)
+```
+
+## Parameter Propagation
+
+### Pipeline to Task
+
+Pass Pipeline parameters to Tasks:
+
+```yaml
+apiVersion: tekton.dev/v1
+kind: Pipeline
+spec:
+  params:
+    - name: repo-url
+      type: string
+  tasks:
+    - name: clone
+      taskRef:
+        name: git-clone
+      params:
+        - name: url
+          value: $(params.repo-url)
+```
+
+### Using Task Results as Parameters
+
+Pass task results to subsequent tasks:
+
+```yaml
+tasks:
+  - name: get-version
+    taskRef:
+      name: read-version
+  - name: build
+    taskRef:
+      name: build-image
+    params:
+      - name: version
+        value: $(tasks.get-version.results.version)
+    runAfter:
+      - get-version
+```
+
+## Object Parameter Example
+
+```yaml
+apiVersion: tekton.dev/v1
+kind: Task
+metadata:
+  name: use-object-param
+spec:
+  params:
+    - name: database
+      type: object
+      properties:
+        host:
+          type: string
+        port:
+          type: string
+        name:
+          type: string
+      default:
+        host: "localhost"
+        port: "5432"
+        name: "mydb"
+  steps:
+    - name: connect
+      image: postgres
+      script: |
+        psql -h $(params.database.host) \
+             -p $(params.database.port) \
+             -d $(params.database.name)
+```
+
+## Array Parameter Example
+
+```yaml
+apiVersion: tekton.dev/v1
+kind: Task
+metadata:
+  name: use-array-param
+spec:
+  params:
+    - name: build-args
+      type: array
+      description: Build arguments for docker build
+      default:
+        - "--no-cache"
+  steps:
+    - name: build
+      image: docker
+      args:
+        - "build"
+        - "$(params.build-args[*])"
+        - "."
+```
+
+## Default Values
+
+Parameters with defaults are optional:
+
+```yaml
+params:
+  - name: revision
+    type: string
+    description: Git revision to checkout
+    default: "main"
+  - name: verbose
+    type: string
+    default: "false"
+```
+
+## Best Practices
+
+1. **Always provide descriptions** - Help users understand parameter purpose
+2. **Use meaningful names** - Choose clear, descriptive parameter names
+3. **Set sensible defaults** - Make parameters optional when reasonable
+4. **Use object params for related values** - Group related configuration
+5. **Validate in scripts** - Add validation logic for parameter values
+6. **Document expected formats** - Specify format in description (e.g., URLs, versions)

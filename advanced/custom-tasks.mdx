@@ -1,0 +1,361 @@
+---
+title: Custom Tasks
+description: Execute custom task controllers using CustomRuns
+---
+
+CustomRuns allow you to instantiate and execute Custom Tasks, which are implemented by custom task controllers running on-cluster. Custom Tasks provide behavior that's independent of the standard Tekton Task implementation.
+
+## Overview
+
+A CustomRun requires a custom task controller to be running on the cluster. This controller watches CustomRuns that reference its task type and updates their status. Without a controller, CustomRuns will have no status and no action will be taken.
+
+<Note>
+`v1beta1.CustomRun` has replaced `v1alpha1.Run` for executing Custom Tasks. See the migration documentation for details on updating from `v1alpha1.Run`.
+</Note>
+
+## Configuring a CustomRun
+
+### Required Fields
+
+- `apiVersion` - Currently only `tekton.dev/v1beta1` is supported
+- `kind` - Must be `CustomRun`
+- `metadata` - Uniquely identifies the CustomRun (e.g., `name`)
+- `spec` - Configuration for the CustomRun
+  - Either `customRef` OR `customSpec` (not both)
+
+### Optional Fields
+
+- `timeout` - Maximum duration for a single execution
+- `retries` - Number of retries upon failure
+- `params` - Execution parameters for the custom task
+- `serviceAccountName` - ServiceAccount for executing the CustomRun
+- `workspaces` - Physical volumes for workspace requirements
+
+## Specifying the Target Custom Task
+
+You can reference a custom task in two ways:
+
+<Tabs>
+  <Tab title="Using customRef">
+
+### Referencing an Existing Custom Task
+
+Use `customRef` to reference a custom task type by API group and kind:
+
+```yaml
+apiVersion: tekton.dev/v1beta1
+kind: CustomRun
+metadata:
+  name: my-example-run
+spec:
+  customRef:
+    apiVersion: example.dev/v1beta1
+    kind: MyCustomKind
+  params:
+  - name: duration
+    value: 10s
+```
+
+When this CustomRun is created, the custom task controller responsible for reconciling `MyCustomKind` in the `example.dev/v1beta1` API group will execute it.
+
+### Referencing by Name
+
+You can also specify a named custom task resource:
+
+```yaml
+apiVersion: tekton.dev/v1beta1
+kind: CustomRun
+metadata:
+  name: my-example-run
+spec:
+  customRef:
+    apiVersion: example.dev/v1beta1
+    kind: Example
+    name: an-existing-example-task
+```
+
+The custom task controller will look up the `Example` resource with that name and use it to configure execution.
+
+### Unnamed Tasks
+
+If no name is specified, the custom task controller may provide default behavior:
+
+```yaml
+apiVersion: tekton.dev/v1beta1
+kind: CustomRun
+metadata:
+  name: my-example-run
+spec:
+  customRef:
+    apiVersion: example.dev/v1beta1
+    kind: Example
+```
+
+  </Tab>
+  <Tab title="Using customSpec">
+
+### Embedding the Custom Task Spec
+
+Embed the custom task specification directly in the CustomRun:
+
+```yaml
+apiVersion: tekton.dev/v1beta1
+kind: CustomRun
+metadata:
+  name: embedded-run
+spec:
+  customSpec:
+    apiVersion: example.dev/v1beta1
+    kind: Example
+    spec:
+      field1: value1
+      field2: value2
+```
+
+This helps avoid name collisions and allows fetching the entire pipeline definition in a single API request when multiple custom tasks are embedded.
+
+<Warning>
+The custom task controller may not support embedded specs. Check the controller's documentation.
+</Warning>
+
+  </Tab>
+</Tabs>
+
+## Parameters
+
+Pass parameters to custom tasks using the `params` field:
+
+```yaml
+spec:
+  params:
+    - name: my-param
+      value: chicken
+```
+
+The custom task controller interprets these values and may enforce required parameters or reject unknown ones.
+
+## Workspaces
+
+If supported by the custom task, provide workspaces to share data:
+
+```yaml
+spec:
+  workspaces:
+    - name: my-workspace
+      emptyDir: {}
+```
+
+Consult the custom task's documentation to determine workspace support and naming requirements.
+
+## Service Account
+
+Execute with specific credentials by specifying a ServiceAccount:
+
+```yaml
+spec:
+  serviceAccountName: my-account
+```
+
+If not specified, the CustomRun uses the service account from `configmap-defaults`, or the namespace's default service account.
+
+## Timeout
+
+Specify a maximum duration for the custom task:
+
+```yaml
+apiVersion: tekton.dev/v1beta1
+kind: CustomRun
+metadata:
+  generateName: simpleexample
+spec:
+  timeout: 10s
+  params:
+    - name: searching
+      value: the purpose of my existence
+  customRef:
+    apiVersion: custom.tekton.dev/v1alpha1
+    kind: Example
+    name: exampleName
+```
+
+<Note>
+Timeout support is optional but recommended. The custom task controller must implement timeout behavior. Tekton controllers never directly update CustomRun status.
+</Note>
+
+### Timeout Implementation Guide for Controllers
+
+1. Tekton controllers never directly update CustomRun status - the custom task controller must handle timeouts
+2. When `CustomRun.Spec.Status` is set to `RunCancelled`, the controller MUST cancel the CustomRun for pipeline-level timeout and cancellation to work
+3. Controllers should watch for `CustomRun.Spec.Status == RunCancelled` or `CustomRun.HasTimedOut()` and take cleanup actions
+4. Set `conditions` on the CustomRun's status to `Succeeded/False` with optional reason `CustomRunTimedOut`
+5. Timeout is specified for each retry attempt, not all retries combined
+
+## Retries
+
+Specify the number of retry attempts:
+
+```yaml
+apiVersion: tekton.dev/v1beta1
+kind: CustomRun
+metadata:
+  generateName: simpleexample
+spec:
+  retries: 3
+  params:
+    - name: searching
+      value: the purpose of my existence
+  customRef:
+    apiVersion: custom.tekton.dev/v1alpha1
+    kind: Example
+    name: exampleName
+```
+
+### Retry Implementation Guide for Controllers
+
+1. Tekton only checks `ConditionSucceeded` to determine termination - controllers MUST NOT set `ConditionSucceeded` to `False` until all retries are exhausted
+2. Controllers that don't support retry can simply ignore the field
+3. Update the `RetriesStatus` field on each retry attempt
+4. Tekton does not validate that `RetriesStatus` entries match the retry count
+
+## Cancellation
+
+Custom tasks must implement cancellation to support pipeline-level timeouts and cancellation.
+
+Pipeline Controller signals cancellation by setting `spec.Status` and `spec.StatusMessage`. The CustomRun controller updates `status.conditions`:
+
+```yaml
+status
+  conditions:
+  - type: Succeeded
+    status: False
+    reason: CustomRunCancelled
+```
+
+<Warning>
+If the custom task does not support cancellation via `.spec.status`, the Pipeline cannot timeout or be cancelled as expected.
+</Warning>
+
+## Monitoring Execution Status
+
+The CustomRun's `status` field tracks execution state, start and completion times, and output results.
+
+### Status Conditions
+
+Custom task controllers update the `status.conditions` field to report progress:
+
+**Ongoing Execution:**
+```yaml
+status
+  conditions:
+  - type: Succeeded
+    status: Unknown
+```
+
+**Successful Completion:**
+```yaml
+status
+  conditions:
+  - type: Succeeded
+    status: True
+    reason: ExampleComplete
+    message: Yay, good times
+```
+
+**Failed Completion:**
+```yaml
+status
+  conditions:
+  - type: Succeeded
+    status: False
+    reason: ExampleFailed
+    message: Oh no bad times
+```
+
+**Cancelled:**
+```yaml
+status
+  conditions:
+  - type: Succeeded
+    status: False
+    reason: CustomRunCancelled
+    message: Oh it's cancelled
+```
+
+### Status Values
+
+| Status | Description |
+|--------|-------------|
+| (unset) | The custom task controller has not taken any action |
+| Unknown | Execution has started and is ongoing |
+| True | Completed successfully |
+| False | Completed unsuccessfully, all retries exhausted |
+
+### Complete Status Example
+
+```yaml
+status
+  conditions:
+  - type: Succeeded
+    status: True
+    reason: ExampleComplete
+    message: Yay, good times
+  completionTime: "2020-06-18T11:55:01Z"
+  startTime: "2020-06-18T11:55:01Z"
+  results:
+  - name: first-name
+    value: Bob
+  - name: last-name
+    value: Smith
+  arbitraryField: hello world
+  arbitraryStructuredField:
+    listOfThings: ["a", "b", "c"]
+```
+
+## Results
+
+Custom task controllers can report output values in the `results` field after completion:
+
+```yaml
+results:
+- name: my-result
+  value: chicken
+```
+
+## Complete Examples
+
+### Example with Referenced Task
+
+```yaml
+apiVersion: tekton.dev/v1beta1
+kind: CustomRun
+metadata:
+  name: my-example-run
+spec:
+  customRef:
+    apiVersion: example.dev/v1alpha1
+    kind: Example
+    name: my-example-task
+```
+
+The controller looks up the `Example` resource named `my-example-task` and uses it to configure execution.
+
+### Example with Parameters
+
+```yaml
+apiVersion: tekton.dev/v1alpha1
+kind: CustomRun
+metadata:
+  name: my-example-run
+spec:
+  customRef:
+    apiVersion: example.dev/v1alpha1
+    kind: Example
+    name: my-example-task
+  params:
+    - name: my-first-param
+      value: i'm number one
+    - name: my-second-param
+      value: close second
+```
+
+The controller validates and interprets these parameters to configure execution.

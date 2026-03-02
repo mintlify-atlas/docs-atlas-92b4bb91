@@ -1,0 +1,305 @@
+---
+title: Hub Resolver
+description: Fetch Tasks and Pipelines from Artifact Hub and Tekton Hub catalogs
+---
+
+The Hub Resolver fetches Tekton resources from the Artifact Hub and Tekton Hub catalogs, providing access to community-maintained Tasks and Pipelines.
+
+## Resolver Type
+
+This resolver responds to type `hub`.
+
+<Warning>
+**DEPRECATION NOTICE**: [Tekton Hub](https://hub.tekton.dev/) is deprecated. Users should migrate to [Artifact Hub](https://artifacthub.io/) for discovering and managing Tekton resources.
+</Warning>
+
+## Parameters
+
+<ParamField path="name" type="string" required>
+  The name of the Task or Pipeline to fetch from the hub.
+  
+  Example: `golang-build`, `git-clone`
+</ParamField>
+
+<ParamField path="version" type="string" required>
+  Version or version constraint of the resource. Must be quoted!
+  
+  Example: `"0.5.0"`, `">= 0.5.0"`, `">= 0.7.0, < 2.0.0"`
+</ParamField>
+
+<ParamField path="kind" type="string" default="task">
+  The type of resource to fetch.
+  
+  Options: `task`, `pipeline`
+</ParamField>
+
+<ParamField path="catalog" type="string">
+  The catalog to pull the resource from. Defaults depend on the kind and type.
+  
+  - Default for tasks: `tekton-catalog-tasks`
+  - Default for pipelines: `tekton-catalog-pipelines`
+  
+  Example: `tekton-catalog-tasks`
+</ParamField>
+
+<ParamField path="type" type="string" default="artifact">
+  The type of Hub to pull from.
+  
+  Options: `artifact` (recommended), `tekton` (deprecated)
+</ParamField>
+
+## Requirements
+
+- A cluster running Tekton Pipeline v0.41.0 or later
+- Built-in remote resolvers installed
+- The `enable-hub-resolver` feature flag set to `true` in the `resolvers-feature-flags` ConfigMap
+- Beta features enabled
+
+## Configuration
+
+The Hub Resolver uses the `hubresolver-config` ConfigMap in the `tekton-pipelines-resolvers` namespace.
+
+### Configuration Options
+
+<CardGroup cols={2}>
+  <Card title="default-tekton-hub-catalog" icon="book">
+    Default Tekton Hub catalog (e.g., `Tekton`)
+  </Card>
+  <Card title="default-artifact-hub-task-catalog" icon="tasks">
+    Default Artifact Hub catalog for tasks (e.g., `tekton-catalog-tasks`)
+  </Card>
+  <Card title="default-artifact-hub-pipeline-catalog" icon="workflow">
+    Default Artifact Hub catalog for pipelines (e.g., `tekton-catalog-pipelines`)
+  </Card>
+  <Card title="default-kind" icon="cube">
+    Default resource kind (e.g., `task`, `pipeline`)
+  </Card>
+  <Card title="default-type" icon="server">
+    Default hub type (e.g., `artifact`, `tekton`)
+  </Card>
+</CardGroup>
+
+### Configuring Hub API Endpoints
+
+For **Artifact Hub** (default), the resolver uses `https://artifacthub.io/` by default. Configure a custom endpoint using the `ARTIFACT_HUB_API` environment variable:
+
+```yaml
+env:
+- name: ARTIFACT_HUB_API
+  value: "https://artifacthub.io/"
+```
+
+For **Tekton Hub** (deprecated), the resolver uses `https://api.hub.tekton.dev` by default. Configure a custom endpoint using the `TEKTON_HUB_API` environment variable:
+
+```yaml
+env:
+- name: TEKTON_HUB_API
+  value: "https://api.private.hub.instance.dev"
+```
+
+## Versioning
+
+The Hub Resolver supports semantic versioning:
+
+- **Artifact Hub**: Uses full semver (`<major>.<minor>.0`)
+- **Tekton Hub**: Uses simplified semver (`<major>.<minor>`)
+
+Both formats are accepted, and the resolver maps the version to the expected format.
+
+### Version Constraints
+
+You can specify version constraints using the [go-version](https://github.com/hashicorp/go-version) syntax:
+
+| Constraint | Description |
+|------------|-------------|
+| `"0.5.0"` | Exact version |
+| `">= 0.7.0"` | Minimum version |
+| `">= 0.7.0, < 2.0.0"` | Version range |
+| `"~> 0.7"` | Pessimistic constraint (>= 0.7, < 1.0) |
+
+## Usage Examples
+
+### Task Resolution from Artifact Hub
+
+```yaml
+apiVersion: tekton.dev/v1beta1
+kind: TaskRun
+metadata:
+  name: hub-task-run
+spec:
+  taskRef:
+    resolver: hub
+    params:
+    - name: catalog
+      value: tekton-catalog-tasks
+    - name: type
+      value: artifact
+    - name: kind
+      value: task
+    - name: name
+      value: git-clone
+    - name: version
+      value: "0.6"
+```
+
+### Task Resolution with Version Constraint
+
+```yaml
+apiVersion: tekton.dev/v1beta1
+kind: TaskRun
+metadata:
+  name: hub-task-constraint
+spec:
+  taskRef:
+    resolver: hub
+    params:
+    - name: name
+      value: git-clone
+    - name: version
+      value: ">= 0.7.0"
+```
+
+This will select the latest `git-clone` task that is greater than or equal to version `0.7.0`.
+
+### Task Resolution with Version Range
+
+```yaml
+apiVersion: tekton.dev/v1beta1
+kind: TaskRun
+metadata:
+  name: hub-task-range
+spec:
+  taskRef:
+    resolver: hub
+    params:
+    - name: name
+      value: git-clone
+    - name: version
+      value: ">= 0.7.0, < 2.0.0"
+```
+
+This will select the **latest** `git-clone` task that is greater than or equal to `0.7.0` and less than `2.0.0`. For example, if version `0.9.0` is the latest available, it will be selected.
+
+### Pipeline Resolution from Artifact Hub
+
+```yaml
+apiVersion: tekton.dev/v1beta1
+kind: PipelineRun
+metadata:
+  name: hub-pipeline-run
+spec:
+  pipelineRef:
+    resolver: hub
+    params:
+    - name: catalog
+      value: tekton-catalog-pipelines
+    - name: type
+      value: artifact
+    - name: kind
+      value: pipeline
+    - name: name
+      value: buildpacks
+    - name: version
+      value: "0.1"
+  # Note: the buildpacks pipeline requires parameters
+```
+
+### Task Resolution from Tekton Hub (Deprecated)
+
+```yaml
+apiVersion: tekton.dev/v1beta1
+kind: TaskRun
+metadata:
+  name: tekton-hub-task
+spec:
+  taskRef:
+    resolver: hub
+    params:
+    - name: catalog
+      value: Tekton
+    - name: type
+      value: tekton
+    - name: kind
+      value: task
+    - name: name
+      value: git-clone
+    - name: version
+      value: "0.6"
+```
+
+### Using Default Values
+
+When using default configuration, you can omit optional parameters:
+
+```yaml
+apiVersion: tekton.dev/v1beta1
+kind: TaskRun
+metadata:
+  name: hub-minimal
+spec:
+  taskRef:
+    resolver: hub
+    params:
+    - name: name
+      value: git-clone
+    - name: version
+      value: "0.6"
+    # kind defaults to "task"
+    # type defaults to "artifact"
+    # catalog defaults to "tekton-catalog-tasks" for tasks
+```
+
+## Version Constraint Examples
+
+<CodeGroup>
+```yaml Exact Version
+params:
+  - name: name
+    value: git-clone
+  - name: version
+    value: "0.7.0"
+```
+
+```yaml Minimum Version
+params:
+  - name: name
+    value: git-clone
+  - name: version
+    value: ">= 0.7.0"
+```
+
+```yaml Version Range
+params:
+  - name: name
+    value: git-clone
+  - name: version
+    value: ">= 0.7.0, < 2.0.0"
+```
+
+```yaml Pessimistic Constraint
+params:
+  - name: name
+    value: git-clone
+  - name: version
+    value: "~> 0.7"
+```
+</CodeGroup>
+
+<Note>
+Always wrap version numbers and constraints in quotes to ensure proper YAML parsing.
+</Note>
+
+## Comparison: Artifact Hub vs Tekton Hub
+
+| Feature | Artifact Hub | Tekton Hub |
+|---------|--------------|------------|
+| Status | **Recommended** | Deprecated |
+| Default URL | https://artifacthub.io/ | https://api.hub.tekton.dev |
+| Versioning | Full semver (`0.6.0`) | Simplified semver (`0.6`) |
+| Type value | `artifact` | `tekton` |
+| Task catalog | `tekton-catalog-tasks` | `Tekton` |
+| Pipeline catalog | `tekton-catalog-pipelines` | `Tekton` |
+
+<Tip>
+Migrate to Artifact Hub for the best experience. See the [migration guide](https://github.com/tektoncd/hub/issues/667) for details.
+</Tip>

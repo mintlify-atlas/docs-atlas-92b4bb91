@@ -1,0 +1,409 @@
+---
+title: Parameters
+description: Parameters concept for Tekton Pipelines
+---
+
+Parameters allow you to supply values at runtime to customize the execution of `Tasks` and `Pipelines`. Parameters provide flexibility and reusability for your Tekton resources.
+
+## Overview
+
+Parameters enable you to:
+- Pass configuration values to Tasks and Pipelines
+- Customize execution without modifying resource definitions
+- Reuse Tasks and Pipelines with different inputs
+- Share data between Tasks in a Pipeline
+
+## Parameter Types
+
+Tekton supports three parameter types:
+
+### String Parameters
+
+The most common parameter type. If no type is specified, it defaults to `string`.
+
+```yaml
+params:
+  - name: image-name
+    type: string
+    description: The name of the image to build
+    default: "my-app:latest"
+```
+
+### Array Parameters
+
+Useful when the number of values varies, such as compilation flags or file lists.
+
+```yaml
+params:
+  - name: flags
+    type: array
+    description: Build flags to pass to the compiler
+    default:
+      - "--verbose"
+      - "--optimize"
+```
+
+### Object Parameters
+
+Useful for grouping related parameters together.
+
+```yaml
+params:
+  - name: gitrepo
+    type: object
+    description: Git repository information
+    properties:
+      url:
+        type: string
+      commit:
+        type: string
+      branch:
+        type: string
+    default:
+      url: "https://github.com/tektoncd/pipeline"
+      branch: "main"
+```
+
+<Note>
+Object parameters must specify the `properties` section to define their schema.
+</Note>
+
+## Parameter Names
+
+Parameter names must follow these rules:
+
+- Must only contain alphanumeric characters, hyphens (`-`), underscores (`_`), and dots (`.`)
+- Must begin with a letter or an underscore (`_`)
+- Are **case insensitive** (e.g., `APPLE` and `apple` are treated as the same)
+
+<Warning>
+Object parameter names and their key names cannot contain dots (`.`).
+</Warning>
+
+### Using Parameter Names with Dots
+
+If a parameter name contains dots, use bracket notation with quotes:
+
+```yaml
+params:
+  - name: foo.bar
+    type: string
+    default: "test"
+steps:
+  - name: echo-param
+    image: bash
+    args:
+      - "echo"
+      - "$(params['foo.bar'])"
+```
+
+## Parameters in Tasks
+
+### Defining Parameters in Tasks
+
+```yaml
+apiVersion: tekton.dev/v1
+kind: Task
+metadata:
+  name: task-with-parameters
+spec:
+  params:
+    - name: gitrepo
+      type: object
+      properties:
+        url:
+          type: string
+        commit:
+          type: string
+    - name: flags
+      type: array
+    - name: someURL
+      type: string
+  steps:
+    - name: do-the-clone
+      image: some-git-image
+      args:
+        - "-url=$(params.gitrepo.url)"
+        - "-revision=$(params.gitrepo.commit)"
+    - name: build
+      image: my-builder
+      args:
+        - "build"
+        - "$(params.flags[*])"
+        - "url=$(params.someURL)"
+```
+
+### Providing Parameters in TaskRuns
+
+```yaml
+apiVersion: tekton.dev/v1
+kind: TaskRun
+metadata:
+  name: run-with-parameters
+spec:
+  taskRef:
+    name: task-with-parameters
+  params:
+    - name: gitrepo
+      value:
+        url: "https://github.com/tektoncd/pipeline"
+        commit: "c12b72"
+    - name: flags
+      value:
+        - "--set"
+        - "arg1=foo"
+        - "--randomflag"
+    - name: someURL
+      value: "http://google.com"
+```
+
+## Parameters in Pipelines
+
+### Defining Parameters in Pipelines
+
+```yaml
+apiVersion: tekton.dev/v1
+kind: Pipeline
+metadata:
+  name: pipeline-with-parameters
+spec:
+  params:
+    - name: context
+      type: string
+      description: Path to context
+      default: /some/where/or/other
+    - name: flags
+      type: array
+      description: List of flags
+  tasks:
+    - name: build-skaffold-web
+      taskRef:
+        name: build-push
+      params:
+        - name: pathToDockerFile
+          value: Dockerfile
+        - name: pathToContext
+          value: "$(params.context)"
+        - name: flags
+          value: ["$(params.flags[*])"]
+```
+
+### Providing Parameters in PipelineRuns
+
+```yaml
+apiVersion: tekton.dev/v1
+kind: PipelineRun
+metadata:
+  name: pipelinerun-with-parameters
+spec:
+  pipelineRef:
+    name: pipeline-with-parameters
+  params:
+    - name: context
+      value: "/workspace/examples/microservices/leeroy-web"
+    - name: flags
+      value:
+        - "foo"
+        - "bar"
+```
+
+## Parameter Variable Substitution
+
+Parameters can be referenced using variable substitution syntax:
+
+### String Parameters
+
+```yaml
+# Reference a string parameter
+$(params.image-name)
+```
+
+### Array Parameters
+
+```yaml
+# Reference entire array (expands to all elements)
+$(params.flags[*])
+
+# Reference specific element
+$(params.flags[0])
+```
+
+### Object Parameters
+
+```yaml
+# Reference object properties
+$(params.gitrepo.url)
+$(params.gitrepo.commit)
+$(params.gitrepo.branch)
+```
+
+<Note>
+You can only reference individual properties of object parameters, not the entire object (except when passing to another object parameter).
+</Note>
+
+## Default Values
+
+Parameters can have default values that are used when no value is provided at runtime:
+
+```yaml
+params:
+  - name: image-name
+    type: string
+    default: "nginx:latest"
+  - name: flags
+    type: array
+    default:
+      - "--verbose"
+  - name: gitrepo
+    type: object
+    properties:
+      url:
+        type: string
+      branch:
+        type: string
+    default:
+      url: "https://github.com/example/repo"
+      branch: "main"
+```
+
+<Note>
+If a parameter does not have a default value, you must explicitly provide its value when creating a TaskRun or PipelineRun.
+</Note>
+
+## Parameter Propagation
+
+When using embedded specs (taskSpec or pipelineSpec), parameters from the parent resource are automatically propagated to child resources:
+
+```yaml
+apiVersion: tekton.dev/v1
+kind: PipelineRun
+metadata:
+  generateName: pr-echo-
+spec:
+  params:
+    - name: HELLO
+      value: "Hello World!"
+  pipelineSpec:
+    tasks:
+      - name: echo-hello
+        taskSpec:
+          steps:
+            - name: echo
+              image: ubuntu
+              script: |
+                #!/usr/bin/env bash
+                echo "$(params.HELLO)"
+```
+
+### Propagation Rules
+
+- Parameters are propagated only to **embedded** specs (taskSpec/pipelineSpec)
+- Parameters are **not** propagated to **referenced** resources (taskRef/pipelineRef)
+- Inner scopes take precedence over outer scopes when parameter names conflict
+- Runtime values take precedence over default values
+
+## Best Practices
+
+<Steps>
+  <Step title="Use Descriptive Names">
+    Choose parameter names that clearly indicate their purpose:
+    ```yaml
+    - name: image-tag        # Good
+    - name: it               # Avoid
+    ```
+  </Step>
+  
+  <Step title="Provide Descriptions">
+    Always include descriptions to help users understand parameter usage:
+    ```yaml
+    - name: timeout
+      type: string
+      description: "Maximum time to wait for the build to complete (e.g., 1h, 30m)"
+    ```
+  </Step>
+  
+  <Step title="Use Default Values">
+    Provide sensible defaults when possible to make your resources easier to use:
+    ```yaml
+    - name: log-level
+      type: string
+      default: "info"
+    ```
+  </Step>
+  
+  <Step title="Group Related Parameters">
+    Use object parameters to group related configuration:
+    ```yaml
+    - name: database
+      type: object
+      properties:
+        host:
+          type: string
+        port:
+          type: string
+        name:
+          type: string
+    ```
+  </Step>
+</Steps>
+
+## Complete Example
+
+```yaml
+apiVersion: tekton.dev/v1
+kind: Task
+metadata:
+  name: build-and-push
+spec:
+  params:
+    - name: image
+      type: object
+      description: Container image information
+      properties:
+        registry:
+          type: string
+        repository:
+          type: string
+        tag:
+          type: string
+      default:
+        registry: "docker.io"
+        tag: "latest"
+    - name: build-args
+      type: array
+      description: Build arguments for docker build
+      default: []
+    - name: push
+      type: string
+      description: Whether to push the image after building
+      default: "true"
+  steps:
+    - name: build
+      image: gcr.io/kaniko-project/executor:latest
+      args:
+        - "--dockerfile=Dockerfile"
+        - "--context=."
+        - "--destination=$(params.image.registry)/$(params.image.repository):$(params.image.tag)"
+        - "$(params.build-args[*])"
+        - "--no-push=$(params.push)"
+---
+apiVersion: tekton.dev/v1
+kind: TaskRun
+metadata:
+  name: build-and-push-run
+spec:
+  taskRef:
+    name: build-and-push
+  params:
+    - name: image
+      value:
+        registry: "gcr.io"
+        repository: "my-project/my-app"
+        tag: "v1.0.0"
+    - name: build-args
+      value:
+        - "--build-arg=VERSION=1.0.0"
+        - "--build-arg=ENV=production"
+    - name: push
+      value: "true"
+```

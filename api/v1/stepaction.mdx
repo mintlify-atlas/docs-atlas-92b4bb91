@@ -1,0 +1,136 @@
+---
+title: StepAction
+description: API reference for the StepAction v1beta1 resource
+---
+
+<Note>
+  StepAction is currently at v1beta1 stability level.
+</Note>
+
+A StepAction represents the actionable components of a Step that can be referenced from Tasks. StepActions enable reusable step logic across multiple Tasks.
+
+## Resource Definition
+
+<ParamField path="apiVersion" type="string" required>
+  `tekton.dev/v1beta1`
+</ParamField>
+
+<ParamField path="kind" type="string" required>
+  `StepAction`
+</ParamField>
+
+<ParamField path="metadata" type="ObjectMeta" required>
+  Standard Kubernetes metadata.
+</ParamField>
+
+<ParamField path="spec" type="StepActionSpec" required>
+  Defines the desired state of the StepAction.
+</ParamField>
+
+## StepActionSpec
+
+<ParamField path="description" type="string">
+  A user-facing description of the step action.
+</ParamField>
+
+<ParamField path="image" type="string">
+  Container image reference to run for this StepAction.
+</ParamField>
+
+<ParamField path="command" type="[]string">
+  Entrypoint array. Not executed within a shell. The image's ENTRYPOINT is used if not provided.
+</ParamField>
+
+<ParamField path="args" type="[]string">
+  Arguments to the entrypoint. The image's CMD is used if not provided.
+</ParamField>
+
+<ParamField path="script" type="string">
+  Script is the contents of an executable file to execute. If Script is not empty, the StepAction cannot have a Command and the Args will be passed to the Script.
+</ParamField>
+
+<ParamField path="workingDir" type="string">
+  Working directory for the step.
+</ParamField>
+
+<ParamField path="env" type="[]EnvVar">
+  List of environment variables to set in the container.
+</ParamField>
+
+<ParamField path="params" type="[]ParamSpec">
+  Input parameters required to run the StepAction. Parameters must be supplied when referencing this StepAction from a Step.
+
+  See [Parameter Types](/api/types/params) for details.
+</ParamField>
+
+<ParamField path="results" type="[]StepResult">
+  Values that this StepAction can output.
+
+  <Expandable title="StepResult fields">
+    <ParamField path="name" type="string" required>
+      Name of the result.
+    </ParamField>
+
+    <ParamField path="type" type="ResultsType">
+      Type of result: `string`, `array`, or `object`. Defaults to `string`.
+    </ParamField>
+
+    <ParamField path="description" type="string">
+      Human-readable description of the result.
+    </ParamField>
+
+    <ParamField path="properties" type="map[string]PropertySpec">
+      For object-type results, defines the properties.
+    </ParamField>
+  </Expandable>
+</ParamField>
+
+<ParamField path="securityContext" type="SecurityContext">
+  Security options the Step should run with. Takes precedence over Task-level security context.
+</ParamField>
+
+<ParamField path="volumeMounts" type="[]VolumeMount">
+  Volumes to mount into the Step's filesystem.
+</ParamField>
+
+## Using StepActions in Steps
+
+Steps can reference StepActions using the `ref` field:
+
+```yaml
+steps:
+  - name: use-stepaction
+    ref:
+      name: my-stepaction
+    params:
+      - name: param1
+        value: value1
+```
+
+## Example
+
+```yaml
+apiVersion: tekton.dev/v1beta1
+kind: StepAction
+metadata:
+  name: git-clone-action
+spec:
+  description: "Clone a git repository"
+  params:
+    - name: url
+      type: string
+      description: Repository URL
+    - name: revision
+      type: string
+      description: Git revision to checkout
+      default: "main"
+  image: gcr.io/tekton-releases/github.com/tektoncd/pipeline/cmd/git-init:latest
+  command:
+    - /ko-app/git-init
+  args:
+    - "-url=$(params.url)"
+    - "-revision=$(params.revision)"
+  results:
+    - name: commit
+      description: The commit SHA that was checked out
+```

@@ -1,0 +1,593 @@
+---
+title: Configuration Options
+description: Configure Tekton Pipelines installation settings
+---
+
+Tekton Pipelines provides extensive configuration options through ConfigMaps in the `tekton-pipelines` namespace. This guide covers all available configuration options.
+
+## ConfigMap Overview
+
+Tekton Pipelines uses the following ConfigMaps for configuration:
+
+- `config-defaults` - Default values for TaskRuns and PipelineRuns
+- `feature-flags` - Feature gates and experimental features
+- `config-events` - CloudEvents configuration
+- `config-observability` - Metrics and observability settings
+- `config-spire` - SPIRE security configuration
+- `config-leader-election-controller` - Leader election settings
+- `config-wait-exponential-backoff` - Retry backoff configuration
+
+## Default Configuration (config-defaults)
+
+The `config-defaults` ConfigMap controls default values for TaskRuns and PipelineRuns.
+
+### Timeout Settings
+
+<ParamField path="default-timeout-minutes" type="string" default="60">
+  Default timeout in minutes for TaskRuns and PipelineRuns when none is specified.
+  
+  ```yaml
+  apiVersion: v1
+  kind: ConfigMap
+  metadata:
+    name: config-defaults
+    namespace: tekton-pipelines
+  data:
+    default-timeout-minutes: "60"
+  ```
+</ParamField>
+
+<ParamField path="default-imagepullbackoff-timeout" type="duration">
+  Duration to wait before declaring failure when image pull fails with `imagePullBackOff`. Setting to `"0"` enables fail-fast behavior.
+  
+  ```yaml
+  data:
+    default-imagepullbackoff-timeout: "5m"
+  ```
+</ParamField>
+
+### Service Account
+
+<ParamField path="default-service-account" type="string" default="default">
+  Default service account name for TaskRuns and PipelineRuns when none is specified.
+  
+  ```yaml
+  data:
+    default-service-account: "tekton"
+  ```
+</ParamField>
+
+### Pod Template
+
+<ParamField path="default-pod-template" type="string">
+  Default pod template applied to all TaskRun pods. Can include node selectors, tolerations, and other pod specifications.
+  
+  ```yaml
+  data:
+    default-pod-template: |
+      nodeSelector:
+        kops.k8s.io/instancegroup: build-instance-group
+  ```
+</ParamField>
+
+<ParamField path="default-affinity-assistant-pod-template" type="string">
+  Default pod template for affinity assistant pods.
+</ParamField>
+
+### Workspace Configuration
+
+<ParamField path="default-task-run-workspace-binding" type="string">
+  Default workspace binding for workspaces declared by Tasks but not provided by TaskRuns.
+  
+  ```yaml
+  data:
+    default-task-run-workspace-binding: |
+      emptyDir: {}
+  ```
+</ParamField>
+
+### Matrix Configuration
+
+<ParamField path="default-max-matrix-combinations-count" type="string" default="256">
+  Maximum number of parameter combinations in a Matrix that can be used to fan out a PipelineTask.
+  
+  ```yaml
+  data:
+    default-max-matrix-combinations-count: "1024"
+  ```
+</ParamField>
+
+### Environment Variables
+
+<ParamField path="default-forbidden-env" type="string">
+  Comma-separated list of environment variables that cannot be overridden by podTemplate.
+  
+  ```yaml
+  data:
+    default-forbidden-env: "TEST_TEKTON,CI_BUILD"
+  ```
+</ParamField>
+
+### Labels
+
+<ParamField path="default-managed-by-label-value" type="string" default="tekton-pipelines">
+  Default value for the `app.kubernetes.io/managed-by` label applied to all pods created for TaskRuns.
+  
+  ```yaml
+  data:
+    default-managed-by-label-value: "my-tekton-installation"
+  ```
+</ParamField>
+
+### Resolver Configuration
+
+<ParamField path="default-resolver-type" type="string">
+  Default resolver type to use in the cluster (e.g., `git`, `bundles`, `hub`, `cluster`).
+  
+  ```yaml
+  data:
+    default-resolver-type: "git"
+  ```
+</ParamField>
+
+<ParamField path="default-maximum-resolution-timeout" type="duration">
+  Maximum duration for the resolution controller before timing out.
+  
+  ```yaml
+  data:
+    default-maximum-resolution-timeout: "1m"
+  ```
+</ParamField>
+
+### Results Configuration
+
+<ParamField path="default-sidecar-log-polling-interval" type="duration" default="100ms">
+  Polling interval for the sidecar log results container. Controls how frequently the sidecar checks for step completion files.
+  
+  Lower values (e.g., `10ms`) increase responsiveness but may increase CPU usage. Higher values (e.g., `1s`) reduce resource usage but may delay result collection.
+  
+  ```yaml
+  data:
+    default-sidecar-log-polling-interval: "100ms"
+  ```
+  
+  <Note>Only applicable when using the sidecar-logs approach for results.</Note>
+</ParamField>
+
+### Step Reference Concurrency
+
+<ParamField path="default-step-ref-concurrency-limit" type="string" default="5">
+  Maximum number of concurrent goroutines for resolving step references. Prevents overwhelming remote servers when TaskRuns contain many steps referencing StepActions.
+  
+  ```yaml
+  data:
+    default-step-ref-concurrency-limit: "20"
+  ```
+</ParamField>
+
+### Resource Requirements
+
+<ParamField path="default-container-resource-requirements" type="string">
+  Default resource requirements for containers created by the controller.
+  
+  ```yaml
+  data:
+    default-container-resource-requirements: |
+      place-scripts:
+        requests:
+          memory: "64Mi"
+          cpu: "250m"
+        limits:
+          memory: "128Mi"
+          cpu: "500m"
+      prepare:
+        requests:
+          memory: "64Mi"
+          cpu: "250m"
+        limits:
+          memory: "256Mi"
+          cpu: "500m"
+      working-dir-initializer:
+        requests:
+          memory: "64Mi"
+          cpu: "250m"
+        limits:
+          memory: "512Mi"
+          cpu: "500m"
+      prefix-scripts:
+        requests:
+          memory: "64Mi"
+          cpu: "250m"
+        limits:
+          memory: "128Mi"
+          cpu: "500m"
+      prefix-sidecar-scripts:
+        requests:
+          memory: "64Mi"
+          cpu: "250m"
+        limits:
+          memory: "128Mi"
+          cpu: "500m"
+      default:
+        requests:
+          memory: "64Mi"
+          cpu: "250m"
+        limits:
+          memory: "256Mi"
+          cpu: "500m"
+  ```
+</ParamField>
+
+## Feature Flags (feature-flags)
+
+The `feature-flags` ConfigMap controls experimental and beta features.
+
+### API Fields
+
+<ParamField path="enable-api-fields" type="string" default="beta">
+  Determines which gated features are enabled. Acceptable values: `stable`, `beta`, `alpha`.
+  
+  ```yaml
+  apiVersion: v1
+  kind: ConfigMap
+  metadata:
+    name: feature-flags
+    namespace: tekton-pipelines
+  data:
+    enable-api-fields: "alpha"
+  ```
+</ParamField>
+
+### Affinity and Scheduling
+
+<ParamField path="coschedule" type="string" default="workspaces">
+  Determines how PipelineRun pods are scheduled with Affinity Assistant.
+  
+  - `workspaces` - Schedule TaskRuns sharing PVC-based workspace to same node
+  - `pipelineruns` - Schedule all TaskRuns in a PipelineRun to same node
+  - `isolate-pipelinerun` - Schedule to same node, only one PipelineRun per node
+  - `disabled` - No coschedule policy
+  
+  ```yaml
+  data:
+    coschedule: "pipelineruns"
+  ```
+</ParamField>
+
+### Sidecar Configuration
+
+<ParamField path="await-sidecar-readiness" type="boolean" default="true">
+  Wait for sidecar containers to be running before starting the first step.
+  
+  Setting to `false` allows immediate step execution but may cause issues with Tasks using sidecars.
+  
+  ```yaml
+  data:
+    await-sidecar-readiness: "false"
+  ```
+</ParamField>
+
+<ParamField path="running-in-environment-with-injected-sidecars" type="boolean" default="true">
+  Whether the cluster uses injected sidecars (e.g., Istio). Setting to `false` can decrease TaskRun startup time.
+  
+  ```yaml
+  data:
+    running-in-environment-with-injected-sidecars: "false"
+  ```
+</ParamField>
+
+<ParamField path="enable-kubernetes-sidecar" type="boolean" default="false">
+  Enable native Kubernetes sidecar support. Requires Kubernetes v1.29 or greater.
+  
+  ```yaml
+  data:
+    enable-kubernetes-sidecar: "true"
+  ```
+</ParamField>
+
+### Credentials and Authentication
+
+<ParamField path="disable-creds-init" type="boolean" default="false">
+  Disable Tekton's built-in credential initialization. When enabled, use Workspaces to mount credentials from Secrets.
+  
+  ```yaml
+  data:
+    disable-creds-init: "true"
+  ```
+</ParamField>
+
+<ParamField path="require-git-ssh-secret-known-hosts" type="boolean" default="false">
+  Require Git SSH Secrets to include a `known_hosts` field for server key validation.
+  
+  ```yaml
+  data:
+    require-git-ssh-secret-known-hosts: "true"
+  ```
+</ParamField>
+
+### OCI Bundles
+
+<ParamField path="enable-tekton-oci-bundles" type="boolean" default="false">
+  Enable Tekton OCI bundle usage, allowing `bundle` field in `taskRef` and `pipelineRef`.
+  
+  ```yaml
+  data:
+    enable-tekton-oci-bundles: "true"
+  ```
+</ParamField>
+
+### Results
+
+<ParamField path="results-from" type="string" default="termination-message">
+  Method for extracting results from tasks.
+  
+  - `termination-message` - Use container termination message (4096 byte limit)
+  - `sidecar-logs` - Use sidecar logs (configurable limit, beta feature)
+  
+  ```yaml
+  data:
+    results-from: "sidecar-logs"
+  ```
+</ParamField>
+
+<ParamField path="max-result-size" type="string">
+  Maximum size in bytes for each result when using `sidecar-logs`. Cannot exceed 1.5MB (CRD size limit).
+  
+  ```yaml
+  data:
+    max-result-size: "8192"
+  ```
+</ParamField>
+
+### Security
+
+<ParamField path="set-security-context" type="boolean" default="false">
+  Set security context for containers injected by Tekton. Required for running in namespaces with `restricted` pod security standards.
+  
+  ```yaml
+  data:
+    set-security-context: "true"
+  ```
+  
+  <Warning>Not supported in all Kubernetes implementations (e.g., OpenShift).</Warning>
+</ParamField>
+
+<ParamField path="set-security-context-read-only-root-filesystem" type="boolean" default="false">
+  Enable `readOnlyRootFilesystem` in security context. Requires `set-security-context` to be enabled.
+  
+  ```yaml
+  data:
+    set-security-context-read-only-root-filesystem: "true"
+  ```
+  
+  <Note>Does not work on Windows platforms.</Note>
+</ParamField>
+
+<ParamField path="trusted-resources-verification-no-match-policy" type="string" default="ignore">
+  Policy when no matching verification policies are found.
+  
+  - `fail` - Fail TaskRun/PipelineRun if no matching policies found
+  - `warn` - Skip verification and log warning
+  - `ignore` - Skip verification silently
+  
+  ```yaml
+  data:
+    trusted-resources-verification-no-match-policy: "warn"
+  ```
+</ParamField>
+
+<ParamField path="enforce-nonfalsifiability" type="string" default="none">
+  Configure non-falsifiable provenance support.
+  
+  - `spire` - Use SPIRE for non-falsifiable provenance (experimental)
+  - `none` - No non-falsifiable provenance
+  
+  ```yaml
+  data:
+    enforce-nonfalsifiability: "spire"
+  ```
+</ParamField>
+
+### CloudEvents
+
+<ParamField path="send-cloudevents-for-runs" type="boolean" default="false">
+  Enable CloudEvents for CustomRuns and Runs when a CloudEvents sink is configured.
+  
+  ```yaml
+  data:
+    send-cloudevents-for-runs: "true"
+  ```
+</ParamField>
+
+### Provenance
+
+<ParamField path="enable-provenance-in-status" type="boolean" default="true">
+  Populate the `provenance` field in TaskRun and PipelineRun status with metadata about resources used.
+  
+  ```yaml
+  data:
+    enable-provenance-in-status: "false"
+  ```
+</ParamField>
+
+### Advanced Features
+
+<ParamField path="keep-pod-on-cancel" type="boolean" default="false">
+  Keep pods running when TaskRuns are cancelled, allowing log examination.
+  
+  ```yaml
+  data:
+    keep-pod-on-cancel: "true"
+  ```
+</ParamField>
+
+<ParamField path="enable-cel-in-whenexpression" type="boolean" default="false">
+  Enable CEL (Common Expression Language) evaluation in WhenExpressions.
+  
+  ```yaml
+  data:
+    enable-cel-in-whenexpression: "true"
+  ```
+</ParamField>
+
+<ParamField path="enable-param-enum" type="boolean" default="false">
+  Enable built-in parameter input validation via parameter enums.
+  
+  ```yaml
+  data:
+    enable-param-enum: "true"
+  ```
+</ParamField>
+
+<ParamField path="disable-inline-spec" type="string" default="">
+  Prevent users from creating embedded spec TaskRuns or PipelineRuns. Comma-separated list of resource types.
+  
+  ```yaml
+  data:
+    disable-inline-spec: "pipeline,pipelinerun,taskrun"
+  ```
+</ParamField>
+
+<ParamField path="enable-concise-resolver-syntax" type="boolean" default="false">
+  Enable concise resolver syntax for referencing remote resources.
+  
+  ```yaml
+  data:
+    enable-concise-resolver-syntax: "true"
+  ```
+</ParamField>
+
+<ParamField path="enable-step-actions" type="boolean" default="true">
+  Enable StepActions feature (stable feature, cannot be disabled).
+</ParamField>
+
+<ParamField path="enable-artifacts" type="boolean" default="false">
+  Enable the use of Artifacts in Steps (preview mode, not yet implemented).
+  
+  ```yaml
+  data:
+    enable-artifacts: "true"
+  ```
+</ParamField>
+
+### Retry Configuration
+
+<ParamField path="enable-wait-exponential-backoff" type="boolean" default="false">
+  Enable exponential backoff retry strategy for TaskRun and CustomRun creation on webhook timeouts.
+  
+  ```yaml
+  data:
+    enable-wait-exponential-backoff: "true"
+  ```
+  
+  Configure backoff parameters in the `config-wait-exponential-backoff` ConfigMap.
+</ParamField>
+
+## Exponential Backoff Configuration (config-wait-exponential-backoff)
+
+When `enable-wait-exponential-backoff` is enabled, customize retry behavior:
+
+```yaml
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: config-wait-exponential-backoff
+  namespace: tekton-pipelines
+data:
+  duration: "10s"   # Initial wait time before first retry
+  factor: "2.0"     # Multiplier for each subsequent retry
+  jitter: "0.0"     # Random jitter (0.0-1.0)
+  steps: "5"        # Maximum number of retry attempts
+  cap: "60s"        # Maximum wait time between retries
+```
+
+<ParamField path="duration" type="duration" default="10s">
+  Initial duration before the first retry.
+</ParamField>
+
+<ParamField path="factor" type="string" default="2.0">
+  Factor by which duration increases after each retry.
+</ParamField>
+
+<ParamField path="jitter" type="string" default="0.0">
+  Jitter factor for randomizing retry intervals (0.0 = no jitter, 0.2 = up to 20% additional wait).
+</ParamField>
+
+<ParamField path="steps" type="string" default="5">
+  Number of backoff steps (retry attempts).
+</ParamField>
+
+<ParamField path="cap" type="duration" default="60s">
+  Maximum duration between retries.
+</ParamField>
+
+## Remote Resolvers Configuration
+
+Four remote resolvers are enabled by default and can be disabled in the `resolvers-feature-flags` ConfigMap:
+
+```yaml
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: resolvers-feature-flags
+  namespace: tekton-pipelines-resolvers
+data:
+  enable-bundles-resolver: "true"
+  enable-git-resolver: "true"
+  enable-hub-resolver: "true"
+  enable-cluster-resolver: "true"
+```
+
+## Registry Certificate Configuration
+
+For private registries with self-signed certificates:
+
+```yaml
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: config-registry-cert
+  namespace: tekton-pipelines
+data:
+  cert: |
+    -----BEGIN CERTIFICATE-----
+    ...
+    -----END CERTIFICATE-----
+```
+
+The `SSL_CERT_DIR` is set to `/etc/ssl/certs` by default. If your cert is not in the default directory, configure it using this ConfigMap.
+
+## Complete Configuration Example
+
+```yaml
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: config-defaults
+  namespace: tekton-pipelines
+data:
+  default-service-account: "tekton"
+  default-timeout-minutes: "20"
+  default-pod-template: |
+    nodeSelector:
+      kops.k8s.io/instancegroup: build-instance-group
+  default-managed-by-label-value: "my-tekton-installation"
+  default-task-run-workspace-binding: |
+    emptyDir: {}
+  default-max-matrix-combinations-count: "1024"
+  default-resolver-type: "git"
+  default-sidecar-log-polling-interval: "100ms"
+---
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: feature-flags
+  namespace: tekton-pipelines
+data:
+  enable-api-fields: "alpha"
+  coschedule: "pipelineruns"
+  results-from: "sidecar-logs"
+  max-result-size: "8192"
+  set-security-context: "true"
+  enable-tekton-oci-bundles: "true"
+```

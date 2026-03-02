@@ -1,0 +1,194 @@
+---
+title: Pipeline
+description: API reference for the Pipeline v1 resource
+---
+
+A Pipeline is a collection of Tasks arranged in a specific order of execution. Pipelines express how outputs of tasks feed into inputs of subsequent tasks.
+
+## Resource Definition
+
+<ParamField path="apiVersion" type="string" required>
+  `tekton.dev/v1`
+</ParamField>
+
+<ParamField path="kind" type="string" required>
+  `Pipeline`
+</ParamField>
+
+<ParamField path="metadata" type="ObjectMeta" required>
+  Standard Kubernetes metadata.
+</ParamField>
+
+<ParamField path="spec" type="PipelineSpec" required>
+  Defines the desired state of the Pipeline.
+</ParamField>
+
+## PipelineSpec
+
+<ParamField path="description" type="string">
+  A user-facing description of the pipeline.
+</ParamField>
+
+<ParamField path="displayName" type="string">
+  A user-facing name of the pipeline that may be used to populate a UI.
+</ParamField>
+
+<ParamField path="params" type="[]ParamSpec">
+  Parameters that must be supplied when running the Pipeline.
+
+  See [Parameter Types](/api/types/params) for details.
+</ParamField>
+
+<ParamField path="tasks" type="[]PipelineTask" required>
+  The graph of Tasks that execute when this Pipeline runs.
+
+  <Expandable title="PipelineTask fields">
+    <ParamField path="name" type="string" required>
+      Name of this task within the Pipeline. Used with `runAfter` to establish execution order.
+    </ParamField>
+
+    <ParamField path="displayName" type="string">
+      User-facing name of this task.
+    </ParamField>
+
+    <ParamField path="description" type="string">
+      Description of this task.
+    </ParamField>
+
+    <ParamField path="taskRef" type="TaskRef">
+      Reference to a Task definition. Mutually exclusive with `taskSpec`.
+    </ParamField>
+
+    <ParamField path="taskSpec" type="TaskSpec">
+      Inline Task specification. Mutually exclusive with `taskRef`.
+    </ParamField>
+
+    <ParamField path="runAfter" type="[]string">
+      List of PipelineTask names that should execute before this Task.
+    </ParamField>
+
+    <ParamField path="params" type="[]Param">
+      Parameters passed to this task.
+    </ParamField>
+
+    <ParamField path="when" type="[]WhenExpression">
+      Conditions that must be true for the task to run.
+
+      See [When Expressions](/api/types/when-expressions) for details.
+    </ParamField>
+
+    <ParamField path="workspaces" type="[]WorkspacePipelineTaskBinding">
+      Maps workspaces from the pipeline to the task.
+
+      <Expandable title="WorkspacePipelineTaskBinding fields">
+        <ParamField path="name" type="string" required>
+          Name of the workspace as declared by the task.
+        </ParamField>
+
+        <ParamField path="workspace" type="string">
+          Name of the workspace declared by the pipeline.
+        </ParamField>
+
+        <ParamField path="subPath" type="string">
+          Optional subdirectory on the volume.
+        </ParamField>
+      </Expandable>
+    </ParamField>
+
+    <ParamField path="timeout" type="Duration">
+      Timeout for this task.
+    </ParamField>
+
+    <ParamField path="retries" type="integer">
+      Number of retries on task failure.
+    </ParamField>
+
+    <ParamField path="onError" type="string">
+      Behavior on task error:
+      - `stopAndFail` - Stop pipeline execution (default)
+      - `continue` - Continue executing remaining tasks
+    </ParamField>
+  </Expandable>
+</ParamField>
+
+<ParamField path="finally" type="[]PipelineTask">
+  Tasks that execute after all pipeline tasks finish, regardless of success or failure.
+</ParamField>
+
+<ParamField path="workspaces" type="[]PipelineWorkspaceDeclaration">
+  Workspaces expected to be provided by a PipelineRun.
+
+  <Expandable title="PipelineWorkspaceDeclaration fields">
+    <ParamField path="name" type="string" required>
+      Name of the workspace.
+    </ParamField>
+
+    <ParamField path="description" type="string">
+      Description of how the workspace is used.
+    </ParamField>
+
+    <ParamField path="optional" type="boolean" default={false}>
+      Whether the workspace is optional.
+    </ParamField>
+  </Expandable>
+</ParamField>
+
+<ParamField path="results" type="[]PipelineResult">
+  Values that this pipeline can output.
+
+  <Expandable title="PipelineResult fields">
+    <ParamField path="name" type="string" required>
+      Name of the result.
+    </ParamField>
+
+    <ParamField path="type" type="ResultsType">
+      Type of the result: `string`, `array`, or `object`
+    </ParamField>
+
+    <ParamField path="description" type="string">
+      Human-readable description.
+    </ParamField>
+
+    <ParamField path="value" type="ResultValue" required>
+      Expression to retrieve the value (e.g., `$(tasks.taskName.results.resultName)`)
+    </ParamField>
+  </Expandable>
+</ParamField>
+
+## Example
+
+```yaml
+apiVersion: tekton.dev/v1
+kind: Pipeline
+metadata:
+  name: example-pipeline
+spec:
+  description: "An example pipeline"
+  params:
+    - name: repo-url
+      type: string
+  workspaces:
+    - name: shared-data
+  tasks:
+    - name: fetch-source
+      taskRef:
+        name: git-clone
+      params:
+        - name: url
+          value: $(params.repo-url)
+      workspaces:
+        - name: output
+          workspace: shared-data
+    - name: build
+      taskRef:
+        name: build-task
+      runAfter:
+        - fetch-source
+      workspaces:
+        - name: source
+          workspace: shared-data
+  finally:
+    - name: cleanup
+      taskRef:
+        name: cleanup-task
+```

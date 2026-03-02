@@ -1,0 +1,369 @@
+---
+title: Git Resolver
+description: Fetch Tasks and Pipelines from git repositories
+---
+
+The Git Resolver fetches Tekton resources from git repositories using either anonymous cloning or authenticated API access.
+
+## Resolver Type
+
+This resolver responds to type `git`.
+
+## Parameters
+
+<ParamField path="url" type="string">
+  URL of the repo to fetch and clone anonymously. Either `url`, or `repo` (with `org`) must be specified, but not both.
+  
+  Example: `https://github.com/tektoncd/catalog.git`
+</ParamField>
+
+<ParamField path="repo" type="string">
+  The repository to find the resource in. Either `url`, or `repo` (with `org`) must be specified, but not both.
+  
+  Example: `pipeline`, `test-infra`
+</ParamField>
+
+<ParamField path="org" type="string">
+  The organization to find the repository in. Default can be set in configuration.
+  
+  Example: `tektoncd`, `kubernetes`
+</ParamField>
+
+<ParamField path="revision" type="string">
+  Git revision to checkout. This can be commit SHA (SHA-1 or SHA-256), branch, or tag.
+  
+  Example: `aeb957601cf41c012be462827053a21a420befca`, `main`, `v0.38.2`
+</ParamField>
+
+<ParamField path="pathInRepo" type="string" required>
+  Where to find the file in the repo.
+  
+  Example: `task/golang-build/0.3/golang-build.yaml`
+</ParamField>
+
+<ParamField path="token" type="string">
+  Optional secret name to fetch the API token from. Defaults to configuration from global configmap.
+  
+  Example: `secret-name`
+</ParamField>
+
+<ParamField path="tokenKey" type="string" default="token">
+  Optional key in the token secret to fetch the token from.
+</ParamField>
+
+<ParamField path="gitToken" type="string">
+  Optional secret name for git clone authentication. When empty, uses anonymous cloning.
+  
+  Example: `secret-gitauth-token`
+</ParamField>
+
+<ParamField path="gitTokenKey" type="string" default="token">
+  Optional key in the gitToken secret to fetch the token from.
+</ParamField>
+
+<ParamField path="serverURL" type="string">
+  Optional server URL for API operations.
+  
+  Example: `https://github.mycompany.com`
+</ParamField>
+
+<ParamField path="scmType" type="string">
+  Optional SCM type for API operations.
+  
+  Options: `github`, `gitlab`, `gitea`, `bitbucketcloud`, `bitbucketserver`
+</ParamField>
+
+<ParamField path="cache" type="string" default="auto">
+  Controls caching behavior for the resolved resource.
+  
+  Options: `always`, `never`, `auto`
+</ParamField>
+
+## Requirements
+
+- A cluster running Tekton Pipeline v0.41.0 or later
+- Built-in remote resolvers installed
+- The `enable-git-resolver` feature flag set to `true` in the `resolvers-feature-flags` ConfigMap
+- Beta features enabled
+
+## Configuration
+
+The Git Resolver uses the `git-resolver-config` ConfigMap in the `tekton-pipelines-resolvers` namespace.
+
+### Configuration Options
+
+<CardGroup cols={2}>
+  <Card title="default-revision" icon="code-branch">
+    Default git revision if none specified (e.g., `main`)
+  </Card>
+  <Card title="fetch-timeout" icon="clock">
+    Maximum time for git clone operations (e.g., `1m`, `2s`)
+  </Card>
+  <Card title="default-url" icon="link">
+    Default repository URL for anonymous cloning
+  </Card>
+  <Card title="scm-type" icon="server">
+    SCM provider type for authenticated API (e.g., `github`, `gitlab`)
+  </Card>
+  <Card title="server-url" icon="globe">
+    SCM provider base URL for authenticated API
+  </Card>
+  <Card title="api-token-secret-name" icon="key">
+    Kubernetes secret containing the SCM API token
+  </Card>
+  <Card title="api-token-secret-key" icon="key">
+    Key within the token secret containing the token
+  </Card>
+  <Card title="default-org" icon="users">
+    Default organization for repositories
+  </Card>
+</CardGroup>
+
+### Caching Options
+
+| Cache Value | Description |
+|-------------|-------------|
+| `always` | Always cache resolved resources |
+| `never` | Never cache resolved resources |
+| `auto` | Cache only when revision is a commit hash (default) |
+
+Configure default cache mode in the `git-resolver-config` ConfigMap:
+
+```yaml
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: git-resolver-config
+  namespace: tekton-pipelines-resolvers
+data:
+  default-cache-mode: "auto"
+```
+
+## Resolution Modes
+
+The Git Resolver supports two modes:
+
+### Git Clone Mode
+
+Uses the `go-git` library to clone repositories. Supports anonymous and authenticated cloning.
+
+**Advantages:**
+- Not subject to API rate limits
+- Higher throughput for repeated access
+- Supports both anonymous and authenticated access
+
+**Limitations:**
+- Clones entire repository in memory
+- Inefficient for large repositories
+- Some commits may not be fetchable without branch/tag refs
+
+### Authenticated API Mode
+
+Fetches individual files via SCM provider APIs (GitHub, GitLab, Gitea, BitBucket).
+
+**Advantages:**
+- Supports private repositories
+- Fetches only the required file
+- Efficient for large repositories
+
+**Limitations:**
+- Subject to API rate limits
+- Requires authentication token
+
+## Usage Examples
+
+### Task Resolution with Git Clone
+
+```yaml
+apiVersion: tekton.dev/v1beta1
+kind: TaskRun
+metadata:
+  name: git-clone-demo-tr
+spec:
+  taskRef:
+    resolver: git
+    params:
+    - name: url
+      value: https://github.com/tektoncd/catalog.git
+    - name: revision
+      value: main
+    - name: pathInRepo
+      value: task/git-clone/0.6/git-clone.yaml
+```
+
+### Task Resolution with Authenticated Git Clone
+
+```yaml
+apiVersion: tekton.dev/v1beta1
+kind: TaskRun
+metadata:
+  name: git-clone-auth-tr
+spec:
+  taskRef:
+    resolver: git
+    params:
+    - name: url
+      value: https://github.com/myorg/private-repo.git
+    - name: revision
+      value: main
+    - name: pathInRepo
+      value: tasks/my-task.yaml
+    - name: gitToken
+      value: git-auth-secret
+    - name: gitTokenKey
+      value: token
+```
+
+### Task Resolution with Authenticated API
+
+```yaml
+apiVersion: tekton.dev/v1beta1
+kind: TaskRun
+metadata:
+  name: git-api-demo-tr
+spec:
+  taskRef:
+    resolver: git
+    params:
+    - name: org
+      value: tektoncd
+    - name: repo
+      value: catalog
+    - name: revision
+      value: main
+    - name: pathInRepo
+      value: task/git-clone/0.6/git-clone.yaml
+```
+
+### Task Resolution with Custom SCM Provider
+
+```yaml
+apiVersion: tekton.dev/v1beta1
+kind: TaskRun
+metadata:
+  name: git-custom-scm-tr
+spec:
+  taskRef:
+    resolver: git
+    params:
+    - name: org
+      value: tektoncd
+    - name: repo
+      value: catalog
+    - name: revision
+      value: main
+    - name: pathInRepo
+      value: task/git-clone/0.6/git-clone.yaml
+    - name: token
+      value: my-secret-token
+    - name: tokenKey
+      value: token
+    - name: scmType
+      value: github
+    - name: serverURL
+      value: https://ghe.mycompany.com
+```
+
+### Pipeline Resolution
+
+```yaml
+apiVersion: tekton.dev/v1beta1
+kind: PipelineRun
+metadata:
+  name: git-clone-demo-pr
+spec:
+  pipelineRef:
+    resolver: git
+    params:
+    - name: url
+      value: https://github.com/tektoncd/catalog.git
+    - name: revision
+      value: main
+    - name: pathInRepo
+      value: pipeline/simple/0.1/simple.yaml
+  params:
+  - name: name
+    value: Ranni
+```
+
+## Multiple Git Provider Configurations
+
+You can configure multiple Git providers in the same ConfigMap using unique key prefixes:
+
+```yaml
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: git-resolver-config
+  namespace: tekton-pipelines-resolvers
+data:
+  # Default configuration
+  fetch-timeout: "1m"
+  default-url: "https://github.com/tektoncd/catalog.git"
+  default-revision: "main"
+  
+  # GitHub Enterprise configuration
+  ghe.scm-type: "github"
+  ghe.server-url: "https://github.enterprise.com"
+  ghe.api-token-secret-name: "ghe-token"
+  ghe.api-token-secret-key: "token"
+  ghe.default-org: "myorg"
+  
+  # GitLab configuration
+  gitlab.scm-type: "gitlab"
+  gitlab.server-url: "https://gitlab.company.com"
+  gitlab.api-token-secret-name: "gitlab-token"
+  gitlab.api-token-secret-key: "pat"
+  gitlab.default-org: "engineering"
+```
+
+Reference a specific configuration using the `configKey` parameter:
+
+```yaml
+apiVersion: tekton.dev/v1beta1
+kind: TaskRun
+metadata:
+  name: git-ghe-tr
+spec:
+  taskRef:
+    resolver: git
+    params:
+    - name: org
+      value: myorg
+    - name: repo
+      value: myrepo
+    - name: pathInRepo
+      value: tasks/build.yaml
+    - name: configKey
+      value: ghe
+```
+
+## ResolutionRequest Status
+
+The `ResolutionRequest.Status.RefSource` field captures source metadata:
+
+```yaml
+status:
+  refSource:
+    uri: git+https://github.com/tektoncd/catalog.git
+    digest:
+      sha1: aeb957601cf41c012be462827053a21a420befca
+    entrypoint: task/git-clone/0.6/git-clone.yaml
+  data: a2luZDogVGFza...
+```
+
+<CardGroup cols={3}>
+  <Card title="uri" icon="link">
+    Git repository URL in SPDX download format
+  </Card>
+  <Card title="digest" icon="fingerprint">
+    Commit SHA (SHA-1 or SHA-256) of resolved revision
+  </Card>
+  <Card title="entrypoint" icon="file">
+    Path to the resource file in the repository
+  </Card>
+</CardGroup>
+
+<Note>
+The Git Resolver supports both SHA-1 and SHA-256 commit hashes for revision validation. See the [Git hash function transition](https://git-scm.com/docs/hash-function-transition) for details.
+</Note>

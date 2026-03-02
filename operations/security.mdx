@@ -1,0 +1,440 @@
+---
+title: Security Features
+description: Security configuration and features in Tekton Pipelines
+---
+
+Tekton Pipelines provides multiple security features including SPIRE integration, trusted resources verification, pod security contexts, and credential management.
+
+## Pod Security Standards
+
+Tekton supports running TaskRuns and PipelineRuns in namespaces with [restricted pod security standards](https://kubernetes.io/docs/concepts/security/pod-security-standards/).
+
+### Enabling Security Context
+
+Set the `set-security-context` feature flag to apply security contexts to Tekton-injected containers:
+
+```yaml
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: feature-flags
+  namespace: tekton-pipelines
+data:
+  set-security-context: "true"
+```
+
+This configuration:
+- Applies SecurityContext to containers injected by the Pipelines controller
+- Applies SecurityContext to Affinity Assistant containers
+- Allows TaskRuns to run in namespaces with `restricted` pod security admission
+
+<Warning>
+This feature may not be supported in all Kubernetes implementations (e.g., OpenShift).
+</Warning>
+
+<Warning>
+Running TaskRuns and PipelineRuns in the `tekton-pipelines` namespace is discouraged.
+</Warning>
+
+### Read-Only Root Filesystem
+
+Enable read-only root filesystem for enhanced security:
+
+```yaml
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: feature-flags
+  namespace: tekton-pipelines
+data:
+  set-security-context: "true"
+  set-security-context-read-only-root-filesystem: "true"
+```
+
+<Note>
+Requires `set-security-context` to be enabled. Does not work on Windows platforms.
+</Note>
+
+## SPIRE Integration (Experimental)
+
+SPIRE provides non-falsifiable provenance for TaskRun results through cryptographic attestation.
+
+<Warning>
+SPIRE support is experimental (alpha) and not yet fully functional. This is a work in progress.
+</Warning>
+
+### Architecture
+
+The SPIRE integration architecture:
+
+1. SPIRE server attests agents running on each cluster node
+2. Tekton Controller has permissions to create workload identity entries
+3. Controller retrieves identity for communicating with SPIRE server
+4. When TaskRun is created:
+   - Controller creates TaskRun pod
+   - Controller registers pod identity with SPIRE server
+   - Steps complete and entrypointer requests SVID from SPIRE agent
+   - SPIRE agent attests workload and issues SVID
+   - Entrypointer receives x509 SVID with certificate and private key
+   - Entrypointer signs TaskRun results and emits signatures to results
+
+### Enabling SPIRE
+
+1. **Enable SPIRE during build:**
+
+```bash
+CGO_ENABLED=0 go build -tags "!disable_spire" -o bin/entrypoint ./cmd/entrypoint
+```
+
+2. **Set enforcement policy:**
+
+```yaml
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: feature-flags
+  namespace: tekton-pipelines
+data:
+  enforce-nonfalsifiability: "spire"
+```
+
+3. **Deploy SPIRE:**
+
+Install SPIRE server, agents, and CSI driver. Use [this example deployment](https://github.com/spiffe/spiffe-csi/tree/main/example/config) for reference.
+
+4. **Register Tekton Controller workload:**
+
+```bash
+# Register node alias
+kubectl -n spire exec -it deployment/spire-server -- \
+  /opt/spire/bin/spire-server entry create \
+    -node \
+    -spiffeID spiffe://example.org/allnodes \
+    -selector k8s_psat:cluster:example-cluster
+
+# Register Tekton controller with admin permissions
+kubectl -n spire exec -it deployment/spire-server -- \
+  /opt/spire/bin/spire-server entry create \
+    -admin \
+    -spiffeID spiffe://example.org/tekton/controller \
+    -parentID spiffe://example.org/allnodes \
+    -selector k8s:ns:tekton-pipelines \
+    -selector k8s:pod-label:app:tekton-pipelines-controller \
+    -selector k8s:sa:tekton-pipelines-controller
+```
+
+5. **Configure controller to access SPIRE agent socket:**
+
+```yaml
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: tekton-pipelines-controller
+  namespace: tekton-pipelines
+spec:
+  template:
+    spec:
+      containers:
+      - name: tekton-pipelines-controller
+        volumeMounts:
+        - name: spiffe-workload-api
+          mountPath: /spiffe-workload-api
+          readOnly: true
+      volumes:
+      - name: spiffe-workload-api
+        csi:
+          driver: "csi.spiffe.io"
+```
+
+6. **Configure SPIRE settings (optional):**
+
+```yaml
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: config-spire
+  namespace: tekton-pipelines
+data:
+  spire-trust-domain: "example.org"
+  spire-socket-path: "unix:///spiffe-workload-api/spire-agent.sock"
+  spire-server-addr: "spire-server.spire.svc.cluster.local:8081"
+  spire-node-alias-prefix: "/tekton-node/"
+```
+
+<ParamField path="spire-trust-domain" type="string" default="example.org">
+  SPIRE trust domain to use.
+</ParamField>
+
+<ParamField path="spire-socket-path" type="string" default="unix:///spiffe-workload-api/spire-agent.sock">
+  SPIRE agent socket path for SPIFFE workload API.
+</ParamField>
+
+<ParamField path="spire-server-addr" type="string" default="spire-server.spire.svc.cluster.local:8081">
+  SPIRE server address for workload/node registration.
+</ParamField>
+
+<ParamField path="spire-node-alias-prefix" type="string" default="/tekton-node/">
+  SPIRE node alias prefix.
+</ParamField>
+
+## Trusted Resources
+
+Verify the authenticity and integrity of Tasks and Pipelines using cryptographic signatures.
+
+### Verification Policy
+
+Trusted Resources verification policy controls behavior when no matching policies are found:
+
+```yaml
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: feature-flags
+  namespace: tekton-pipelines
+data:
+  trusted-resources-verification-no-match-policy: "warn"
+```
+
+<ParamField path="trusted-resources-verification-no-match-policy" type="string" default="ignore">
+  Policy when no matching verification policies exist.
+  
+  - `fail` - Fail TaskRun/PipelineRun if no matching policies found
+  - `warn` - Skip verification, log warning, continue execution
+  - `ignore` - Skip verification silently, continue execution
+  
+  ```yaml
+  data:
+    trusted-resources-verification-no-match-policy: "fail"
+  ```
+</ParamField>
+
+### Creating Verification Policies
+
+Define VerificationPolicy resources to specify which keys can verify which resources:
+
+```yaml
+apiVersion: tekton.dev/v1alpha1
+kind: VerificationPolicy
+metadata:
+  name: trusted-tasks
+  namespace: default
+spec:
+  resources:
+  - pattern: "https://github.com/tektoncd/catalog/task/.*"
+  authorities:
+  - name: tekton-catalog
+    key:
+      data: |
+        -----BEGIN PUBLIC KEY-----
+        MFkwEwYHKoZIzj0CAQYIKoZIzj0DAQcDQgAE...
+        -----END PUBLIC KEY-----
+```
+
+See [Trusted Resources documentation](./trusted-resources.md) for complete details.
+
+## Credential Management
+
+### Git SSH Secrets
+
+Require `known_hosts` field in Git SSH Secrets for server key validation:
+
+```yaml
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: feature-flags
+  namespace: tekton-pipelines
+data:
+  require-git-ssh-secret-known-hosts: "true"
+```
+
+With this enabled, Git SSH Secrets must include `known_hosts`:
+
+```yaml
+apiVersion: v1
+kind: Secret
+metadata:
+  name: git-ssh-secret
+  annotations:
+    tekton.dev/git-0: github.com
+type: kubernetes.io/ssh-auth
+data:
+  ssh-privatekey: <base64-encoded-private-key>
+  known_hosts: <base64-encoded-known-hosts>
+```
+
+<Warning>
+Secrets without `known_hosts` will cause TaskRun validation to fail when this flag is enabled.
+</Warning>
+
+### Disabling Credential Initialization
+
+Disable Tekton's built-in credential initialization and use Workspaces instead:
+
+```yaml
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: feature-flags
+  namespace: tekton-pipelines
+data:
+  disable-creds-init: "true"
+```
+
+With this enabled:
+- Tekton won't scan service accounts for credentials
+- Credentials won't be automatically mounted into Steps
+- Use Workspaces to explicitly mount credential Secrets
+
+<Note>
+Disabling credential initialization prevents PipelineResources from working.
+</Note>
+
+## Registry Certificate Configuration
+
+Configure self-signed certificates for private registries:
+
+```yaml
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: config-registry-cert
+  namespace: tekton-pipelines
+data:
+  cert: |
+    -----BEGIN CERTIFICATE-----
+    MIIDXTCCAkWgAwIBAgIJAKHt8xFChjHnMA0GCSqGSIb3DQEBCwUAMEUxCzAJBgNV
+    ...
+    -----END CERTIFICATE-----
+```
+
+The `SSL_CERT_DIR` environment variable is set to `/etc/ssl/certs` by default. If your registry certificate is not in the default location, configure it using this ConfigMap.
+
+## Release Verification
+
+Tekton Pipelines images are signed by [Tekton Chains](https://github.com/tektoncd/chains) since v0.27.1.
+
+### Verify Image Signatures with Cosign
+
+Install cosign:
+
+```bash
+go install github.com/sigstore/cosign/cmd/cosign@latest
+```
+
+Verify an image:
+
+```bash
+cosign verify \
+  -key https://raw.githubusercontent.com/tektoncd/chains/main/tekton.pub \
+  gcr.io/tekton-releases/github.com/tektoncd/pipeline/cmd/controller:v0.28.1
+```
+
+Expected output:
+
+```json
+{
+  "Critical": {
+    "Identity": {
+      "docker-reference": "gcr.io/tekton-releases/github.com/tektoncd/pipeline/cmd/controller"
+    },
+    "Image": {
+      "Docker-manifest-digest": "sha256:0c320bc09e91e22ce7f01e47c9f3cb3449749a5f72d5eaecb96e710d999c28e8"
+    },
+    "Type": "Tekton container signature"
+  }
+}
+```
+
+### Verify Transparency Logs with Rekor
+
+Install rekor-cli:
+
+```bash
+go install -v github.com/sigstore/rekor/cmd/rekor-cli@latest
+```
+
+Search transparency log using the digest from cosign:
+
+```bash
+rekor-cli search --sha sha256:0c320bc09e91e22ce7f01e47c9f3cb3449749a5f72d5eaecb96e710d999c28e8
+```
+
+Get provenance:
+
+```bash
+rekor-cli get --uuid <UUID> --format json | jq -r .Attestation | base64 --decode | jq
+```
+
+### Verify Release Manifest
+
+Compare digest in `release.yaml` with provenance:
+
+```bash
+curl -s https://storage.googleapis.com/tekton-releases/pipeline/previous/v0.28.1/release.yaml | \
+  grep github.com/tektoncd/pipeline/cmd/controller:v0.28.1 | \
+  awk -F"@" '{print $2}'
+```
+
+Verify all image references in the deployment match the provenance.
+
+## Hermetic Execution Mode
+
+Run Tasks in an isolated environment without network access (experimental alpha feature):
+
+```yaml
+apiVersion: tekton.dev/v1
+kind: TaskRun
+metadata:
+  name: hermetic-task
+spec:
+  taskRef:
+    name: my-task
+  podTemplate:
+    securityContext:
+      runAsNonRoot: true
+      runAsUser: 65532
+```
+
+See [Hermetic Execution documentation](./hermetic.md) for details.
+
+## Security Best Practices
+
+1. **Enable security context** for restricted pod security standards
+2. **Require known_hosts** for Git SSH authentication
+3. **Use RBAC** to limit who can create/modify Tekton resources
+4. **Verify images** using cosign before deployment
+5. **Implement trusted resources** verification for production
+6. **Use private registries** with authentication for container images
+7. **Rotate credentials** regularly
+8. **Limit service account permissions** to minimum required
+9. **Use Workspaces** for sensitive data instead of environment variables
+10. **Enable audit logging** for Tekton resource changes
+11. **Scan container images** for vulnerabilities
+12. **Use pod security policies/standards** appropriate for your environment
+13. **Monitor for security events** in controller logs
+14. **Keep Tekton updated** to latest stable version for security patches
+
+## Security Checklist
+
+- [ ] `set-security-context` enabled for restricted namespaces
+- [ ] `require-git-ssh-secret-known-hosts` enabled
+- [ ] Trusted resources verification configured
+- [ ] RBAC policies defined and applied
+- [ ] Service accounts follow least privilege principle
+- [ ] Container images verified with cosign
+- [ ] Private registry authentication configured
+- [ ] Secrets stored in external secret manager
+- [ ] Network policies restrict pod communication
+- [ ] Audit logging enabled for Kubernetes API
+- [ ] Regular security scans scheduled
+- [ ] Incident response plan documented
+- [ ] Security training completed for pipeline authors
+
+## Additional Resources
+
+- [Tekton Chains](https://github.com/tektoncd/chains) - Supply chain security for Tekton
+- [SPIFFE/SPIRE](https://spiffe.io/) - Workload identity framework
+- [Sigstore](https://www.sigstore.dev/) - Keyless signing and verification
+- [Pod Security Standards](https://kubernetes.io/docs/concepts/security/pod-security-standards/)
+- [Kubernetes Security Best Practices](https://kubernetes.io/docs/concepts/security/)

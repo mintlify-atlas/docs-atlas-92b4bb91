@@ -1,0 +1,329 @@
+---
+title: Hermetic Execution
+description: Run TaskRuns in a network-isolated environment for secure, reproducible builds
+---
+
+Hermetic Execution Mode enables running TaskRun steps without network access, following release engineering best practices for reliable and consistent software builds.
+
+<Note>
+Hermetic execution mode is currently an alpha experimental feature.
+</Note>
+
+## Overview
+
+A Hermetic Build is a release engineering best practice that ensures builds are:
+- **Self-contained** - Don't depend on anything outside the build environment
+- **Reproducible** - Same inputs always produce same outputs
+- **Isolated** - No network access during execution
+- **Reliable** - Cannot fetch dependencies at runtime
+
+When hermetic execution mode is enabled, all TaskRun steps run without network access, preventing:
+- Downloading dependencies during build time
+- Accessing external services
+- Fetching remote resources
+- Network-based attacks
+
+<Warning>
+Hermetic execution mode does NOT apply to sidecar containers. Only Steps in the TaskRun are isolated from the network.
+</Warning>
+
+## Enabling Hermetic Execution
+
+### Prerequisites
+
+1. Set `enable-api-fields` to `"alpha"` in the `feature-flags` ConfigMap:
+
+```yaml
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: feature-flags
+  namespace: tekton-pipelines
+  labels:
+    app.kubernetes.io/instance: default
+    app.kubernetes.io/part-of: tekton-pipelines
+data:
+  enable-api-fields: "alpha"
+```
+
+### Enable for a TaskRun
+
+2. Add the hermetic execution annotation to your TaskRun:
+
+```yaml
+annotations:
+  experimental.tekton.dev/execution-mode: hermetic
+```
+
+## Example: Hermetic TaskRun
+
+This example demonstrates a TaskRun that should fail when hermetic mode is working correctly:
+
+```yaml
+kind: TaskRun
+apiVersion: tekton.dev/v1beta1
+metadata:
+  generateName: hermetic-should-fail
+  annotations:
+    experimental.tekton.dev/execution-mode: hermetic
+spec:
+  timeout: 60s
+  taskSpec:
+    steps:
+    - name: hermetic
+      image: ubuntu
+      script: |
+        #!/usr/bin/env bash
+        apt-get update
+        apt-get install -y curl
+```
+
+The Step attempts to install curl, which requires network access. This **SHOULD FAIL** if the hermetic environment is working correctly, as the container cannot reach external package repositories.
+
+## Successful Hermetic TaskRun
+
+Here's an example that works correctly in hermetic mode by using only what's in the container image:
+
+```yaml
+kind: TaskRun
+apiVersion: tekton.dev/v1beta1
+metadata:
+  generateName: hermetic-success
+  annotations:
+    experimental.tekton.dev/execution-mode: hermetic
+spec:
+  timeout: 60s
+  taskSpec:
+    steps:
+    - name: hermetic-build
+      image: golang:1.20
+      workingDir: /workspace
+      script: |
+        #!/usr/bin/env bash
+        # All dependencies should be vendored
+        go build -mod=vendor -o app ./cmd/main.go
+```
+
+This succeeds because:
+- The Go image contains the compiler
+- Dependencies are vendored (included in the source)
+- No network access is required
+
+## Use Cases
+
+### Secure CI/CD Pipelines
+
+Ensure build steps cannot exfiltrate data or download malicious code:
+
+```yaml
+apiVersion: tekton.dev/v1beta1
+kind: Pipeline
+metadata:
+  name: secure-build
+spec:
+  tasks:
+    - name: build
+      taskSpec:
+        steps:
+          - name: compile
+            image: maven:3.8-openjdk-11
+            script: |
+              mvn clean package -o  # -o flag for offline mode
+      metadata:
+        annotations:
+          experimental.tekton.dev/execution-mode: hermetic
+```
+
+### Reproducible Builds
+
+Guarantee that builds produce identical outputs:
+
+```yaml
+kind: TaskRun
+apiVersion: tekton.dev/v1beta1
+metadata:
+  generateName: reproducible-build-
+  annotations:
+    experimental.tekton.dev/execution-mode: hermetic
+spec:
+  taskSpec:
+    workspaces:
+      - name: source
+    steps:
+    - name: build
+      image: rust:1.70
+      workingDir: $(workspaces.source.path)
+      script: |
+        #!/usr/bin/env bash
+        # All dependencies must be in Cargo.lock
+        cargo build --release --offline --locked
+  workspaces:
+    - name: source
+      persistentVolumeClaim:
+        claimName: source-pvc
+```
+
+### Compliance and Auditing
+
+Meet regulatory requirements for build isolation:
+
+```yaml
+kind: TaskRun
+apiVersion: tekton.dev/v1beta1
+metadata:
+  generateName: compliant-build-
+  annotations:
+    experimental.tekton.dev/execution-mode: hermetic
+  labels:
+    compliance: "SLSA-L3"
+    security-level: "high"
+spec:
+  taskSpec:
+    steps:
+    - name: verify-dependencies
+      image: alpine:3.18
+      script: |
+        #!/bin/sh
+        # Verify all dependencies are present
+        ls -la /workspace/vendor/
+    - name: build
+      image: node:18-alpine
+      script: |
+        #!/bin/sh
+        # Build using only vendored dependencies
+        npm ci --offline
+        npm run build
+```
+
+## Preparing for Hermetic Builds
+
+To successfully run hermetic builds, prepare your environment:
+
+### 1. Vendor Dependencies
+
+<Tabs>
+  <Tab title="Go">
+
+```bash
+# Vendor all dependencies
+go mod vendor
+
+# Build with vendored dependencies
+go build -mod=vendor ./...
+```
+
+  </Tab>
+  <Tab title="Node.js">
+
+```bash
+# Create offline mirror
+npm ci
+npm run build
+
+# Or use offline mode with existing node_modules
+npm install --offline
+```
+
+  </Tab>
+  <Tab title="Python">
+
+```bash
+# Download dependencies
+pip download -r requirements.txt -d ./vendor
+
+# Install from local directory
+pip install --no-index --find-links=./vendor -r requirements.txt
+```
+
+  </Tab>
+  <Tab title="Java/Maven">
+
+```bash
+# Download all dependencies
+mvn dependency:go-offline
+
+# Build in offline mode
+mvn clean package -o
+```
+
+  </Tab>
+</Tabs>
+
+### 2. Use Appropriate Base Images
+
+Choose images that contain all necessary tools:
+
+```yaml
+steps:
+  - name: build
+    # Use full image with all tools, not minimal images
+    image: maven:3.8-openjdk-11  # Good: includes Maven and JDK
+    # image: openjdk:11-slim      # Bad: might need to install Maven
+```
+
+### 3. Pre-stage Artifacts
+
+Mount workspaces with pre-downloaded dependencies:
+
+```yaml
+workspaces:
+  - name: maven-cache
+    mountPath: /root/.m2
+  - name: npm-cache
+    mountPath: /root/.npm
+```
+
+## Troubleshooting
+
+### Network Access Errors
+
+If you see errors like:
+- `Could not resolve host`
+- `Connection timeout`
+- `Network is unreachable`
+
+This confirms hermetic mode is working. Ensure dependencies are vendored or cached.
+
+### Debugging Hermetic Failures
+
+Temporarily disable hermetic mode to identify network dependencies:
+
+```yaml
+# Remove this annotation to debug
+# annotations:
+#   experimental.tekton.dev/execution-mode: hermetic
+```
+
+Run the TaskRun with network access and observe which URLs are accessed.
+
+## Implementation Details
+
+Hermetic execution mode is implemented by:
+
+1. Configuring network policies for the TaskRun pod
+2. Disabling network interfaces in Step containers
+3. Blocking DNS resolution
+4. Preventing outbound connections
+
+For technical details, see [TEP-0025: Hermekton](https://github.com/tektoncd/community/blob/main/teps/0025-hermekton.md).
+
+## Limitations
+
+<Warning>
+Current limitations of hermetic execution mode:
+
+- Does not apply to sidecar containers
+- Requires alpha API fields to be enabled
+- May not work with all cluster networking configurations
+- Container image pulls must complete before hermetic mode activates
+</Warning>
+
+## Best Practices
+
+1. **Test incrementally** - Start with simple TaskRuns and gradually add complexity
+2. **Vendor all dependencies** - Don't rely on network access during builds
+3. **Use dependency locking** - Pin exact versions (e.g., `package-lock.json`, `Cargo.lock`)
+4. **Pre-populate caches** - Mount workspaces with pre-downloaded artifacts
+5. **Verify offline mode** - Test build commands with `--offline` flags locally
+6. **Document dependencies** - Clearly list all required tools and libraries
+7. **Separate fetch from build** - Use separate Tasks for dependency download and compilation

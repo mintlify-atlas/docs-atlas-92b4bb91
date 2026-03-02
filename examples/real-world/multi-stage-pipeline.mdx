@@ -1,0 +1,324 @@
+---
+title: "Multi-Stage Pipeline"
+description: "Complex pipeline with parallel execution and data flow"
+---
+
+This example demonstrates a sophisticated pipeline with parallel tasks, shared workspaces, and data flowing through both results and files.
+
+## Pipeline Architecture
+
+This pipeline implements a message transformation workflow:
+
+```
+            -- (upper) -- (reporter)
+          /                         \
+ (starter)                           (validator)
+          \                         /
+            -- (lower) ------------
+```
+
+The pipeline receives a message, transforms it in parallel to uppercase and lowercase, reports the uppercase version, then validates both transformations.
+
+## Complete Example
+
+```yaml
+apiVersion: tekton.dev/v1
+kind: Pipeline
+metadata:
+  name: parallel-pipeline
+spec:
+  params:
+    - name: message
+      type: string
+
+  workspaces:
+    - name: ws
+
+  tasks:
+    - name: starter
+      taskRef:
+        name: persist-param
+      params:
+        - name: message
+          value: $(params.message)
+      workspaces:
+        - name: task-ws
+          workspace: ws
+          subPath: init
+
+    - name: upper
+      runAfter:
+        - starter
+      taskRef:
+        name: to-upper
+      params:
+        - name: input-path
+          value: init/message
+      workspaces:
+        - name: w
+          workspace: ws
+
+    - name: lower
+      runAfter:
+        - starter
+      taskRef:
+        name: to-lower
+      params:
+        - name: input-path
+          value: init/message
+      workspaces:
+        - name: w
+          workspace: ws
+
+    - name: reporter
+      runAfter:
+        - upper
+      taskRef:
+        name: result-reporter
+      params:
+        - name: result-to-report
+          value: $(tasks.upper.results.message)
+
+    - name: validator
+      runAfter:
+        - reporter
+        - lower
+      taskRef:
+        name: validator
+      workspaces:
+        - name: files
+          workspace: ws
+---
+apiVersion: tekton.dev/v1
+kind: PipelineRun
+metadata:
+  generateName: parallel-pipelinerun-
+spec:
+  params:
+    - name: message
+      value: Hello Tekton
+  pipelineRef:
+    name: parallel-pipeline
+  workspaces:
+    - name: ws
+      volumeClaimTemplate:
+        spec:
+          accessModes:
+            - ReadWriteOnce
+          resources:
+            requests:
+              storage: 1Gi
+```
+
+## Task Definitions
+
+### Persist Parameter Task
+
+Writes the input message to both a file and a result:
+
+```yaml
+apiVersion: tekton.dev/v1
+kind: Task
+metadata:
+  name: persist-param
+spec:
+  params:
+    - name: message
+      type: string
+  results:
+    - name: message
+      description: A result message
+  steps:
+    - name: write
+      image: mirror.gcr.io/ubuntu
+      script: echo $(params.message) | tee $(workspaces.task-ws.path)/message $(results.message.path)
+  workspaces:
+    - name: task-ws
+```
+
+### Transform Tasks
+
+Both upper and lower tasks follow the same pattern - read from workspace, transform, write to both workspace and results:
+
+```yaml
+apiVersion: tekton.dev/v1
+kind: Task
+metadata:
+  name: to-upper
+spec:
+  params:
+    - name: input-path
+      type: string
+  results:
+    - name: message
+      description: Input message in upper case
+  steps:
+    - name: to-upper
+      image: mirror.gcr.io/ubuntu
+      script: cat $(workspaces.w.path)/$(params.input-path) | tr '[:lower:]' '[:upper:]' | tee $(workspaces.w.path)/upper $(results.message.path)
+  workspaces:
+    - name: w
+```
+
+## How It Works
+
+<Steps>
+  <Step title="Initialize Message">
+    The `starter` task receives the message parameter "Hello Tekton" and writes it to:
+    - File: `ws/init/message`
+    - Result: `message`
+    
+    The task uses `subPath: init` to write to a subdirectory of the shared workspace.
+  </Step>
+  
+  <Step title="Parallel Transformation">
+    Both `upper` and `lower` tasks:
+    - Wait for `starter` to complete (via `runAfter`)
+    - Run in parallel (no dependency between them)
+    - Read from `ws/init/message`
+    - Transform the text
+    - Write to both workspace files and results
+    
+    **upper** produces:
+    - File: `ws/upper` containing "HELLO TEKTON"
+    - Result: "HELLO TEKTON"
+    
+    **lower** produces:
+    - File: `ws/lower` containing "hello tekton"
+    - Result: "hello tekton"
+  </Step>
+  
+  <Step title="Report Result">
+    The `reporter` task:
+    - Waits for `upper` to complete
+    - Receives the uppercase message via result: `$(tasks.upper.results.message)`
+    - Prints it (simulating sending to an external service)
+    - Does NOT use a workspace, so can be scheduled on any node
+  </Step>
+  
+  <Step title="Validate Outputs">
+    The `validator` task:
+    - Waits for both `reporter` and `lower` to complete
+    - Reads files from workspace: `ws/upper` and `ws/lower`
+    - Validates both contain the expected transformed text
+    - Fails if either validation fails
+  </Step>
+</Steps>
+
+## Data Flow Patterns
+
+This pipeline demonstrates two ways to pass data between tasks:
+
+### Via Workspace Files
+```
+starter (write) → upper/lower (read & write) → validator (read)
+```
+
+Good for:
+- Large data (files, artifacts)
+- Binary data
+- Multiple files
+
+### Via Task Results
+```
+upper (emit result) → reporter (receive via param)
+```
+
+Good for:
+- Small text data (< 4KB)
+- Commit SHAs, version numbers
+- Status flags
+- Metadata
+
+## Execution Timeline
+
+```
+Time  Task
+────  ────────────────────────────────
+  0   [starter]
+      
+  5   [upper]  [lower]  ← Parallel
+      
+ 10      [reporter]
+      
+ 15         [validator]
+```
+
+## Workspace Organization
+
+The shared workspace is organized with subpaths:
+
+```
+ws/
+├── init/
+│   └── message          # "Hello Tekton"
+├── upper                # "HELLO TEKTON"
+└── lower                # "hello tekton"
+```
+
+## Affinity Assistant
+
+Since multiple tasks use the same workspace, Tekton's Affinity Assistant ensures they run on the same node. The `reporter` task doesn't use a workspace, so it can run on any node.
+
+<Note>
+  You can disable the Affinity Assistant if your cluster has ReadWriteMany volumes or other shared storage solutions.
+</Note>
+
+## Expected Output
+
+**starter task:**
+```
+Hello Tekton
+```
+
+**upper task:**
+```
+HELLO TEKTON
+```
+
+**lower task:**
+```
+hello tekton
+```
+
+**reporter task:**
+```
+HELLO TEKTON
+```
+
+**validator task:**
+```
+Validation successful
+```
+
+## Real-World Applications
+
+This pattern is useful for:
+
+- **Multi-architecture builds**: Build for amd64 and arm64 in parallel
+- **Test suites**: Run unit, integration, and e2e tests in parallel
+- **Multi-environment deploys**: Deploy to dev and staging in parallel
+- **Data processing**: Transform data in parallel pipelines
+- **Notifications**: Send status to multiple services
+
+## Key Concepts
+
+- **Diamond Dependencies**: Tasks converge and diverge in the dependency graph
+- **Parallel Execution**: Independent tasks run simultaneously
+- **Data Persistence**: Using workspaces for file-based data sharing
+- **Result Propagation**: Using results for lightweight data passing
+- **Workspace Subpaths**: Organizing data within a shared workspace
+- **Implicit vs Explicit Dependencies**: Using both `runAfter` and result references
+- **Affinity Scheduling**: Tasks sharing workspaces run on the same node
+
+## Performance Considerations
+
+- **Parallelization**: The pipeline completes faster because upper and lower run in parallel
+- **Node Affinity**: Workspace-sharing tasks avoid data transfer between nodes
+- **Resource Requests**: The reporter task can use spare capacity on any node
+
+## Next Steps
+
+- Explore [git clone and build workflows](/examples/real-world/git-clone-build)
+- Learn about [building Docker images](/examples/real-world/build-docker-image)
+- See [finally tasks for cleanup](/examples/real-world/git-clone-build#finally-tasks)

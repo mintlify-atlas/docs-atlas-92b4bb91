@@ -1,0 +1,86 @@
+---
+title: Contributing Overview
+description: Guide to contributing to Tekton Pipelines
+---
+
+Thank you for contributing your time and expertise to Tekton. This guide describes how to get started with contributing to the Tekton Pipelines project.
+
+## Code of Conduct
+
+Before you start contributing, you must read and abide by our [Code of Conduct](https://github.com/tektoncd/pipeline/blob/main/code-of-conduct.md).
+
+## Getting Started
+
+To start contributing to Tekton code:
+
+1. Set up your development environment - see the [Development Guide](/contributing/development-guide)
+2. Understand the architecture - see the [Architecture Overview](/contributing/architecture)
+3. Review the development standards and processes in the [Tekton community repo](https://github.com/tektoncd/community)
+
+## Development Standards
+
+The [Tekton community repository](https://github.com/tektoncd/community) contains important information on:
+
+- [Development standards](https://github.com/tektoncd/community/blob/main/standards.md):
+  - Writing high quality code
+  - Adopting good development principles
+  - Writing useful commit messages
+
+- [Development processes](https://github.com/tektoncd/community/tree/main/process#readme):
+  - Finding things to work on
+  - Proposing new features
+  - Performing code reviews
+  - Becoming a community member and maintainer
+
+- [Contacting other contributors](https://github.com/tektoncd/community/blob/main/contact.md)
+
+## Tekton Pipelines Resources
+
+- [GitHub Project](https://github.com/orgs/tektoncd/projects/3) - Track project progress and milestones
+- [Roadmap](https://github.com/tektoncd/pipeline/blob/main/roadmap.md) - Upcoming features and priorities
+- [API Compatibility Policy](https://github.com/tektoncd/pipeline/blob/main/api_compatibility_policy.md) - Guidelines for API changes
+- [Topical Ownership](https://github.com/tektoncd/pipeline/blob/main/topical-ownership.md) - Contact owners for specific areas
+
+## Slash Commands
+
+The project includes GitHub slash commands to automate common workflows:
+
+### /cherry-pick
+
+Automatically cherry-picks a merged PR to one or more target branches.
+
+**Usage**: `/cherry-pick <target-branch> [<target-branch2> ...]`
+
+**Examples**:
+- `/cherry-pick release-v0.47.x`
+- `/cherry-pick release-v0.47.x release-v1.3.x`
+
+**Requirements**:
+- PR must be merged
+- User must have write permissions
+- Target branch(es) must exist
+
+The command creates a new PR with the cherry-picked changes for each target branch.
+
+### /rebase
+
+Rebases a PR branch against its base branch and force pushes the result.
+
+**Usage**: `/rebase`
+
+**Requirements**:
+- PR must be open
+- PR must not be from a fork (branch must be in tektoncd/pipeline)
+- User must have write permissions
+
+The command rebases the PR's head branch onto the base branch. If there are conflicts, it reports them in a comment. Uses `--force-with-lease` for safe force pushing.
+
+## Contributing to Documentation
+
+If you want to contribute to Tekton documentation, see the [Tekton Documentation Contributor's Guide](https://github.com/tektoncd/website/blob/main/content/en/docs/Contribute/_index.md).
+
+The guide includes:
+- The contribution process for documentation
+- Standards for writing high quality content
+- Formatting conventions
+- A primer for getting started with writing documentation

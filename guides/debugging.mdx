@@ -1,0 +1,581 @@
+---
+title: Debugging Guide
+description: Debug TaskRuns using breakpoints and troubleshoot common issues
+---
+
+Tekton provides debugging capabilities to help you troubleshoot failing Tasks and understand pipeline execution. This guide covers debug features and troubleshooting techniques.
+
+## Overview
+
+Debugging features in Tekton:
+
+- Breakpoints on Step failure
+- Breakpoints before Step execution
+- Interactive debugging in Step containers
+- Access to debug scripts and information
+- Exit code inspection
+
+<Note>
+Debug features are an alpha capability. Set `enable-api-fields` to `"alpha"` in the feature-flags ConfigMap to enable debugging.
+</Note>
+
+## Enabling Debug Mode
+
+Enable debug features in your Tekton installation:
+
+```bash
+kubectl edit configmap feature-flags -n tekton-pipelines
+```
+
+Set `enable-api-fields: "alpha"`:
+
+```yaml
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: feature-flags
+  namespace: tekton-pipelines
+data:
+  enable-api-fields: "alpha"
+```
+
+## Breakpoint on Failure
+
+Pause Task execution when a Step fails, allowing you to inspect the container state:
+
+```yaml
+apiVersion: tekton.dev/v1
+kind: TaskRun
+metadata:
+  generateName: debug-on-failure-
+spec:
+  debug:
+    breakpoints:
+      - onFailure
+  taskSpec:
+    steps:
+      - name: failing-step
+        image: alpine
+        script: |
+          echo "This step will fail"
+          exit 1
+      - name: next-step
+        image: alpine
+        script: |
+          echo "This step won't execute due to failure"
+```
+
+### How Failure Breakpoints Work
+
+1. Step executes and fails (non-zero exit code)
+2. Instead of stopping, the Step container pauses
+3. Subsequent Steps are not skipped
+4. Step waits for user intervention
+5. User can inspect the container and decide how to continue
+
+### Accessing the Paused Step
+
+When a Step is paused on failure:
+
+```bash
+# Get the pod name
+kubectl get taskruns
+kubectl get pods | grep <taskrun-name>
+
+# Get logs to see breakpoint message
+kubectl logs <pod-name> -c step-failing-step
+```
+
+You'll see output like:
+```
+This step will fail
+Breakpoint on failure hit. Container will not exit.
+Use the following commands to continue or fail:
+  Continue: /tekton/debug/scripts/debug-continue
+  Fail: /tekton/debug/scripts/debug-fail-continue
+```
+
+### Interacting with the Paused Step
+
+<Steps>
+
+<Step title="Exec into the container">
+
+```bash
+kubectl exec -it <pod-name> -c step-failing-step -- /bin/sh
+```
+
+</Step>
+
+<Step title="Inspect the environment">
+
+```bash
+# Check current directory
+pwd
+ls -la
+
+# Examine environment variables
+env | grep TEKTON
+
+# View step results location
+ls -la /tekton/results
+
+# Check what failed
+echo $?
+```
+
+</Step>
+
+<Step title="Fix and continue or mark as failed">
+
+**Option 1: Mark as successful and continue**
+```bash
+/tekton/debug/scripts/debug-continue
+```
+
+**Option 2: Mark as failed and continue**
+```bash
+/tekton/debug/scripts/debug-fail-continue
+```
+
+</Step>
+
+</Steps>
+
+### Debug Scripts on Failure
+
+| Script | Description |
+|--------|-------------|
+| `/tekton/debug/scripts/debug-continue` | Mark Step as successful and continue |
+| `/tekton/debug/scripts/debug-fail-continue` | Mark Step as failed and continue |
+
+Example:
+```bash
+# Inside the container
+cd /workspace
+
+# Fix the issue
+echo "data" > required-file.txt
+
+# Mark as successful and continue
+/tekton/debug/scripts/debug-continue
+```
+
+## Breakpoint Before Step
+
+Pause execution before a Step starts:
+
+```yaml
+apiVersion: tekton.dev/v1
+kind: TaskRun
+metadata:
+  generateName: debug-before-step-
+spec:
+  debug:
+    breakpoints:
+      - beforeStep: critical-step
+  taskSpec:
+    steps:
+      - name: setup
+        image: alpine
+        script: |
+          echo "Setup complete"
+      - name: critical-step
+        image: alpine
+        script: |
+          echo "Running critical step"
+          cat /workspace/important-file.txt
+      - name: cleanup
+        image: alpine
+        script: |
+          echo "Cleanup"
+```
+
+### Accessing Before-Step Breakpoint
+
+When the breakpoint is hit:
+
+```bash
+kubectl logs <pod-name> -c step-critical-step
+```
+
+Output:
+```
+debug before step breakpoint has taken effect, waiting for user's decision:
+1) continue, use cmd: /tekton/debug/scripts/debug-beforestep-continue
+2) fail-continue, use cmd: /tekton/debug/scripts/debug-beforestep-fail-continue
+```
+
+### Before-Step Debug Options
+
+<Steps>
+
+<Step title="Exec into the container">
+
+```bash
+kubectl exec -it <pod-name> -c step-critical-step -- /bin/sh
+```
+
+</Step>
+
+<Step title="Inspect or prepare the environment">
+
+```bash
+# Check workspace state
+ls -la /workspace
+
+# Verify prerequisites
+cat /workspace/config.yaml
+
+# Create missing files if needed
+echo "test data" > /workspace/important-file.txt
+```
+
+</Step>
+
+<Step title="Continue or skip the step">
+
+**Option 1: Continue with step execution**
+```bash
+/tekton/debug/scripts/debug-beforestep-continue
+```
+
+**Option 2: Skip step and mark as failed**
+```bash
+/tekton/debug/scripts/debug-beforestep-fail-continue
+```
+
+</Step>
+
+</Steps>
+
+### Before-Step Debug Scripts
+
+| Script | Description |
+|--------|-------------|
+| `/tekton/debug/scripts/debug-beforestep-continue` | Continue to execute the Step |
+| `/tekton/debug/scripts/debug-beforestep-fail-continue` | Skip the Step and mark as failed |
+
+## Debug Environment
+
+Tekton provides additional resources in debug mode:
+
+### Debug Mounts
+
+| Path | Description |
+|------|-------------|
+| `/tekton/debug/scripts` | Debug control scripts (shared across all Steps) |
+| `/tekton/debug/info/<n>` | Step-specific information (n = step index) |
+
+### Debug Scripts Reference
+
+**OnFailure Breakpoint:**
+- `/tekton/debug/scripts/debug-continue` - Exit with success (creates `/tekton/run/<step>/out.breakpointexit`)
+- `/tekton/debug/scripts/debug-fail-continue` - Exit with failure (creates `/tekton/run/<step>/out.breakpointexit.err`)
+
+**BeforeStep Breakpoint:**
+- `/tekton/debug/scripts/debug-beforestep-continue` - Proceed with Step execution
+- `/tekton/debug/scripts/debug-beforestep-fail-continue` - Skip Step and mark as failed
+
+### Step Information
+
+Each Step has debug information available:
+
+```bash
+# For step index 0
+ls -la /tekton/debug/info/0
+
+# For step index 1  
+ls -la /tekton/debug/info/1
+```
+
+## Viewing Logs and Status
+
+### Get TaskRun Status
+
+```bash
+# List TaskRuns
+kubectl get taskruns
+
+# Get detailed status
+kubectl describe taskrun <taskrun-name>
+
+# Watch TaskRun status
+kubectl get taskrun <taskrun-name> -w
+```
+
+### View Step Logs
+
+```bash
+# Get pod name from TaskRun
+kubectl get taskrun <taskrun-name> -o jsonpath='{.status.podName}'
+
+# View logs for all containers
+kubectl logs <pod-name> --all-containers
+
+# View logs for specific step
+kubectl logs <pod-name> -c step-<step-name>
+
+# Follow logs in real-time
+kubectl logs <pod-name> -c step-<step-name> -f
+```
+
+### Using Tekton CLI
+
+```bash
+# Install tkn CLI
+# https://github.com/tektoncd/cli
+
+# View TaskRun logs
+tkn taskrun logs <taskrun-name>
+
+# Follow logs
+tkn taskrun logs <taskrun-name> -f
+
+# View TaskRun description
+tkn taskrun describe <taskrun-name>
+```
+
+## Troubleshooting Common Issues
+
+### Image Pull Errors
+
+<Accordion title="Failed to pull image">
+
+**Symptoms:**
+```
+Failed to pull image "myregistry/myimage:tag": rpc error: code = Unknown
+```
+
+**Solutions:**
+
+1. Verify image exists:
+```bash
+docker pull myregistry/myimage:tag
+```
+
+2. Check image pull secrets:
+```yaml
+spec:
+  serviceAccountName: build-bot  # SA with imagePullSecrets
+```
+
+3. Verify ServiceAccount:
+```bash
+kubectl get sa build-bot -o yaml
+```
+
+4. Check credentials:
+```bash
+kubectl get secret <image-pull-secret> -o yaml
+```
+
+</Accordion>
+
+### Workspace Issues
+
+<Accordion title="Workspace not found or permission denied">
+
+**Symptoms:**
+```
+Error: cannot access /workspace/source: No such file or directory
+Error: permission denied writing to /workspace/output
+```
+
+**Debug steps:**
+
+```yaml
+steps:
+  - name: debug-workspace
+    image: alpine
+    script: |
+      echo "=== Workspace Debug ==="
+      echo "Path: $(workspaces.source.path)"
+      echo "Bound: $(workspaces.source.bound)"
+      ls -la $(workspaces.source.path)
+      id
+      ls -ld $(workspaces.source.path)
+```
+
+**Common fixes:**
+
+1. Verify workspace is provided:
+```yaml
+workspaces:
+  - name: source
+    emptyDir: {}  # Or PVC, ConfigMap, etc.
+```
+
+2. Check PVC exists:
+```bash
+kubectl get pvc
+```
+
+3. Fix permissions with initContainer or fsGroup:
+```yaml
+podTemplate:
+  securityContext:
+    fsGroup: 1000
+```
+
+</Accordion>
+
+### Result Errors
+
+<Accordion title="Result not found or invalid">
+
+**Symptoms:**
+```
+Error: failed to get result: result "image-digest" not found
+Error: invalid result format
+```
+
+**Debug:**
+
+```yaml
+steps:
+  - name: check-result
+    image: alpine
+    script: |
+      echo "Result path: $(results.image-digest.path)"
+      ls -la $(results.image-digest.path)
+      cat $(results.image-digest.path)
+      # Check size
+      wc -c $(results.image-digest.path)
+```
+
+**Fixes:**
+
+1. Ensure result is written:
+```bash
+echo -n "sha256:abc123" | tee $(results.image-digest.path)
+```
+
+2. Use `-n` flag with echo (no trailing newline):
+```bash
+# Good
+echo -n "value" | tee $(results.result-name.path)
+
+# Bad - includes newline
+echo "value" > $(results.result-name.path)
+```
+
+3. Verify result size (must be < 4KB):
+```bash
+ls -lh $(results.result-name.path)
+```
+
+</Accordion>
+
+### Authentication Issues
+
+<Accordion title="Git or Docker authentication failed">
+
+**Check credentials are mounted:**
+```yaml
+steps:
+  - name: check-creds
+    image: alpine
+    script: |
+      echo "Credentials path: $(credentials.path)"
+      ls -la $(credentials.path)
+      ls -la $(credentials.path)/.ssh 2>/dev/null || echo "No SSH creds"
+      ls -la $(credentials.path)/.docker 2>/dev/null || echo "No Docker creds"
+```
+
+**Verify Secret annotation:**
+```bash
+kubectl get secret <secret-name> -o yaml
+```
+
+Should have annotation like:
+```yaml
+annotations:
+  tekton.dev/git-0: https://github.com
+  tekton.dev/docker-0: https://gcr.io
+```
+
+**Check ServiceAccount:**
+```bash
+kubectl get sa <serviceaccount-name> -o yaml
+```
+
+See the [Authentication guide](/guides/authentication) for detailed configuration.
+
+</Accordion>
+
+## Best Practices
+
+### Use Breakpoints Sparingly
+
+<Warning>
+Breakpoints pause TaskRun execution indefinitely. Use them for development and troubleshooting, not in production pipelines.
+</Warning>
+
+### Add Debug Steps for Complex Tasks
+
+```yaml
+steps:
+  - name: debug-environment
+    image: alpine
+    script: |
+      echo "=== Environment Debug ==="
+      echo "Working directory: $(pwd)"
+      echo "User: $(id)"
+      echo "Workspace path: $(workspaces.source.path)"
+      echo "Workspace bound: $(workspaces.source.bound)"
+      echo "Parameters:"
+      echo "  app-name: $(params.app-name)"
+      echo "  version: $(params.version)"
+      echo "Disk usage:"
+      df -h
+      echo "Environment variables:"
+      env | sort
+  - name: actual-work
+    image: builder-image
+    script: |
+      # Main work here
+```
+
+### Capture Artifacts on Failure
+
+```yaml
+finally:
+  - name: collect-logs
+    when:
+      - input: $(tasks.build.status)
+        operator: in
+        values: ["Failed"]
+    taskSpec:
+      steps:
+        - name: save-logs
+          image: alpine
+          script: |
+            # Collect and save debug information
+            kubectl logs <pod-name> --all-containers > /workspace/logs.txt
+```
+
+### Document Expected Behavior
+
+```yaml
+steps:
+  - name: validate-prerequisites
+    image: alpine
+    script: |
+      # This step verifies:
+      # 1. Source code is checked out
+      # 2. Required config files exist
+      # 3. Dependencies are available
+      
+      if [ ! -f "$(workspaces.source.path)/package.json" ]; then
+        echo "ERROR: package.json not found"
+        echo "Expected: Source workspace should contain Node.js project"
+        exit 1
+      fi
+      
+      echo "Prerequisites validated successfully"
+```
+
+<Tip>
+Add a debug Step at the beginning of complex Tasks to validate assumptions and display the execution environment.
+</Tip>

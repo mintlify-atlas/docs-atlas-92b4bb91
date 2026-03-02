@@ -1,0 +1,409 @@
+---
+title: Authentication Configuration
+description: Configure authentication for Git and Docker registries in Tekton Pipelines
+---
+
+Tekton supports authentication for Git repositories and Docker registries using Kubernetes Secrets. This guide shows you how to configure authentication for your TaskRuns and PipelineRuns.
+
+## Overview
+
+Tekton supports authentication via Kubernetes first-class Secret types:
+
+- **Git**: `kubernetes.io/basic-auth` and `kubernetes.io/ssh-auth`
+- **Docker**: `kubernetes.io/basic-auth`, `kubernetes.io/dockercfg`, and `kubernetes.io/dockerconfigjson`
+
+A TaskRun or PipelineRun gains access to these Secrets through its associated ServiceAccount. Tekton converts properly annotated Secrets and stores them in a Step's container as:
+
+- **Git**: `~/.gitconfig` file or `~/.ssh` directory
+- **Docker**: `~/.docker/config.json` file
+
+<Note>
+Tekton performs credential initialization within every Pod before executing any Steps, accessing each Secret and aggregating them into `/tekton/creds` before copying or symlinking files to the user's `$HOME` directory.
+</Note>
+
+## Understanding Credential Selection
+
+You must annotate each Secret to specify the domains for which Tekton can use the credentials. Tekton ignores all Secrets that are not properly annotated.
+
+A credential annotation key must begin with `tekton.dev/git-` or `tekton.dev/docker-` and its value is the URL of the host:
+
+```yaml
+apiVersion: v1
+kind: Secret
+metadata:
+  annotations:
+    tekton.dev/git-0: https://github.com
+    tekton.dev/git-1: https://gitlab.com
+    tekton.dev/docker-0: https://gcr.io
+type: kubernetes.io/basic-auth
+stringData:
+  username: <cleartext username>
+  password: <cleartext password>
+```
+
+For SSH authentication with Git:
+
+```yaml
+apiVersion: v1
+kind: Secret
+metadata:
+  annotations:
+    tekton.dev/git-0: github.com
+type: kubernetes.io/ssh-auth
+stringData:
+  ssh-privatekey: <private-key>
+  known_hosts: <known-hosts>
+```
+
+<Warning>
+Always include a `known_hosts` entry in SSH Secrets as a security measure. Omitting this results in the server's public key being blindly accepted.
+</Warning>
+
+## Configuring Git Authentication
+
+### Basic Authentication for Git
+
+<Steps>
+
+<Step title="Create the Secret">
+
+Define a Secret with your username and password (or personal access token for GitHub):
+
+```yaml
+apiVersion: v1
+kind: Secret
+metadata:
+  name: basic-user-pass
+  annotations:
+    tekton.dev/git-0: https://github.com
+type: kubernetes.io/basic-auth
+stringData:
+  username: <cleartext username>
+  password: <cleartext password>
+```
+
+<Note>
+GitHub deprecated basic authentication with username and password. Use a personal access token instead of a cleartext password. See [GitHub's documentation](https://docs.github.com/en/github/authenticating-to-github/creating-a-personal-access-token).
+</Note>
+
+</Step>
+
+<Step title="Create a ServiceAccount">
+
+Associate the Secret with a ServiceAccount:
+
+```yaml
+apiVersion: v1
+kind: ServiceAccount
+metadata:
+  name: build-bot
+secrets:
+  - name: basic-user-pass
+```
+
+</Step>
+
+<Step title="Reference the ServiceAccount">
+
+Associate the ServiceAccount with your TaskRun or PipelineRun:
+
+```yaml
+apiVersion: tekton.dev/v1beta1
+kind: TaskRun
+metadata:
+  name: build-push-task-run-2
+spec:
+  serviceAccountName: build-bot
+  taskRef:
+    name: build-push
+```
+
+</Step>
+
+<Step title="Apply the configuration">
+
+```bash
+kubectl apply --filename secret.yaml serviceaccount.yaml run.yaml
+```
+
+</Step>
+
+</Steps>
+
+### SSH Authentication for Git
+
+<Steps>
+
+<Step title="Create the SSH Secret">
+
+Define a Secret with your SSH private key:
+
+```yaml
+apiVersion: v1
+kind: Secret
+metadata:
+  name: ssh-key
+  annotations:
+    tekton.dev/git-0: github.com
+type: kubernetes.io/ssh-auth
+stringData:
+  ssh-privatekey: <private-key>
+  known_hosts: <known-hosts>
+```
+
+</Step>
+
+<Step title="Generate the private key">
+
+```bash
+cat ~/.ssh/id_rsa
+```
+
+Set the value of the `known_hosts` field to the appropriate value for your Git server.
+
+</Step>
+
+<Step title="Create a ServiceAccount">
+
+```yaml
+apiVersion: v1
+kind: ServiceAccount
+metadata:
+  name: build-bot
+secrets:
+  - name: ssh-key
+```
+
+</Step>
+
+<Step title="Apply and use">
+
+```bash
+kubectl apply --filename secret.yaml,serviceaccount.yaml,run.yaml
+```
+
+</Step>
+
+</Steps>
+
+### Custom SSH Port
+
+You can specify a custom SSH port in your Secret annotation:
+
+```yaml
+apiVersion: v1
+kind: Secret
+metadata:
+  name: ssh-key-custom-port
+  annotations:
+    tekton.dev/git-0: example.com:2222
+type: kubernetes.io/ssh-auth
+stringData:
+  ssh-privatekey: <private-key>
+  known_hosts: <known-hosts>
+```
+
+## Configuring Docker Authentication
+
+### Basic Authentication for Docker
+
+<Steps>
+
+<Step title="Create the Secret">
+
+```yaml
+apiVersion: v1
+kind: Secret
+metadata:
+  name: basic-user-pass
+  annotations:
+    tekton.dev/docker-0: https://gcr.io
+type: kubernetes.io/basic-auth
+stringData:
+  username: <cleartext username>
+  password: <cleartext password>
+```
+
+</Step>
+
+<Step title="Create a ServiceAccount">
+
+```yaml
+apiVersion: v1
+kind: ServiceAccount
+metadata:
+  name: build-bot
+secrets:
+  - name: basic-user-pass
+```
+
+</Step>
+
+<Step title="Reference in TaskRun or PipelineRun">
+
+```yaml
+apiVersion: tekton.dev/v1beta1
+kind: PipelineRun
+metadata:
+  name: demo-pipeline
+  namespace: default
+spec:
+  serviceAccountName: build-bot
+  pipelineRef:
+    name: demo-pipeline
+```
+
+</Step>
+
+</Steps>
+
+### Docker Config Authentication
+
+Use your existing Docker client configuration:
+
+<Steps>
+
+<Step title="Create Secret from Docker config">
+
+```bash
+kubectl create secret generic regcred \
+  --from-file=.dockerconfigjson=<path/to/.docker/config.json> \
+  --type=kubernetes.io/dockerconfigjson
+```
+
+</Step>
+
+<Step title="Associate with ServiceAccount">
+
+```yaml
+apiVersion: v1
+kind: ServiceAccount
+metadata:
+  name: build-bot
+secrets:
+  - name: regcred
+```
+
+</Step>
+
+</Steps>
+
+<Note>
+If you specify both Tekton `basic-auth` and Kubernetes `dockerconfigjson` Secrets, Tekton merges all credentials but `basic-auth` overrides the Kubernetes Secrets.
+</Note>
+
+## Using Secrets as a Non-Root User
+
+When running Steps as a non-root user, consider the following:
+
+- SSH authentication for Git requires the user to have a valid home directory in `/etc/passwd`
+- SSH ignores the `$HOME` environment variable, so you must symlink or move Secret files from `/tekton/home` to the non-root user's home directory
+
+Example from the authenticating-git-commands sample:
+
+```yaml
+- name: git-clone-and-check
+  image: alpine-git-nonroot:latest
+  securityContext:
+    runAsUser: 1000
+  script: |
+    #!/usr/bin/env ash
+    # Symlink credentials to non-root user's home
+    ln -s $(credentials.path)/.ssh /home/nonroot/.ssh
+    git clone root@localhost:/root/repo ./repo
+```
+
+## Limiting Secret Access to Specific Steps
+
+By default, Tekton makes Secrets available to all Steps. To limit a Secret to specific Steps:
+
+1. Do not use the ServiceAccount-based approach described above
+2. Instead, explicitly specify a Volume using the Secret definition
+3. Manually mount it only into the desired Steps using VolumeMount
+
+## Disabling Built-In Authentication
+
+To disable Tekton's built-in credential handling, edit the `feature-flag` ConfigMap:
+
+```bash
+kubectl edit configmap feature-flag -n tekton-pipelines
+```
+
+Set `disable-creds-init` to `"true"`.
+
+<Warning>
+After disabling built-in auth, you must pass credentials explicitly to Tasks using Workspaces, environment variables, or custom volumes.
+</Warning>
+
+## Troubleshooting
+
+<Accordion title="Warning: unsuccessful cred copy">
+
+This warning can occur for several reasons:
+
+**Multiple Steps with varying UIDs**
+
+Steps with different users/UIDs trying to initialize credentials in the same Task. Solution: Ensure all Steps run with the same UID using a TaskRun's Pod template field.
+
+**Workspace or Volume also mounted**
+
+A Task has both a Workspace/Volume for credentials and a ServiceAccount with credentials. Solution: Don't mix credentials mounted via Workspace with those initialized via ServiceAccount.
+
+**Read-only Workspace for $HOME**
+
+A Task has a read-only Workspace mounted for the HOME directory. Solution: Don't mix credentials mounted via Workspace with ServiceAccount-based initialization.
+
+**Step named image-digest-exporter**
+
+If this warning appears for the `image-digest-exporter` Step, you can safely ignore it. This Step is injected by Tekton and doesn't use the credentials.
+
+</Accordion>
+
+## Technical Reference
+
+### Basic Auth for Git
+
+Tekton generates the following files:
+
+```
+=== ~/.gitconfig ===
+[credential]
+    helper = store
+[credential "https://url1.com"]
+    username = "user1"
+
+=== ~/.git-credentials ===
+https://user1:pass1@url1.com
+```
+
+### SSH Auth for Git
+
+Tekton generates:
+
+```
+=== ~/.ssh/id_key1 ===
+{contents of key1}
+
+=== ~/.ssh/config ===
+Host url1.com
+    HostName url1.com
+    IdentityFile ~/.ssh/id_key1
+
+=== ~/.ssh/known_hosts ===
+{contents of known_hosts1}
+```
+
+### Basic Auth for Docker
+
+Tekton generates:
+
+```json
+{
+  "auths": {
+    "https://url1.com": {
+      "auth": "base64(user1:pass1)",
+      "email": "not@val.id"
+    }
+  }
+}
+```

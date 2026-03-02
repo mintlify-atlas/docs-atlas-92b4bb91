@@ -1,0 +1,330 @@
+---
+title: Cluster Resolver
+description: Fetch Tasks and Pipelines from within the same Kubernetes cluster
+---
+
+The Cluster Resolver fetches Tekton resources that are already deployed in the same Kubernetes cluster, enabling resource reuse across namespaces.
+
+## Resolver Type
+
+This resolver responds to type `cluster`.
+
+## Parameters
+
+<ParamField path="kind" type="string" required>
+  The kind of resource to fetch.
+  
+  Options: `task`, `pipeline`, `stepaction`
+</ParamField>
+
+<ParamField path="name" type="string" required>
+  The name of the resource to fetch.
+  
+  Example: `some-pipeline`, `some-task`
+</ParamField>
+
+<ParamField path="namespace" type="string" required>
+  The namespace containing the resource.
+  
+  Example: `default`, `other-namespace`
+</ParamField>
+
+<ParamField path="cache" type="string" default="auto">
+  Optional cache mode for the resolver.
+  
+  Options: `always`, `never`, `auto`
+</ParamField>
+
+## Requirements
+
+- A cluster running Tekton Pipeline v0.41.0 or later
+- Built-in remote resolvers installed
+- The `enable-cluster-resolver` feature flag set to `true` in the `resolvers-feature-flags` ConfigMap
+- Beta features enabled
+
+## Configuration
+
+The Cluster Resolver uses the `cluster-resolver-config` ConfigMap in the `tekton-pipelines-resolvers` namespace.
+
+### Configuration Options
+
+<CardGroup cols={2}>
+  <Card title="default-kind" icon="cube">
+    Default resource kind if not specified (e.g., `task`, `pipeline`)
+  </Card>
+  <Card title="default-namespace" icon="folder">
+    Default namespace if not specified (e.g., `default`)
+  </Card>
+  <Card title="allowed-namespaces" icon="check-circle">
+    Comma-separated list of allowed namespaces (empty = all allowed)
+  </Card>
+  <Card title="blocked-namespaces" icon="ban">
+    Comma-separated list of blocked namespaces (`*` = block all except allowed)
+  </Card>
+</CardGroup>
+
+### Namespace Access Control
+
+Control which namespaces the resolver can access:
+
+```yaml
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: cluster-resolver-config
+  namespace: tekton-pipelines-resolvers
+data:
+  # Allow only specific namespaces
+  allowed-namespaces: "default,production,staging"
+  
+  # Block specific namespaces
+  blocked-namespaces: "kube-system,kube-public"
+  
+  # Block all except allowed (use * with allowed-namespaces)
+  # blocked-namespaces: "*"
+  # allowed-namespaces: "default,production"
+```
+
+### Cache Configuration
+
+The cluster resolver supports caching, but **only when explicitly enabled** with `cache: always`:
+
+| Cache Mode | Description |
+|------------|-------------|
+| `always` | Always cache the resolved resource |
+| `never` | Never cache the resolved resource |
+| `auto` | Never cache (cluster resources lack immutable references) |
+| (not specified) | Never cache (same as `auto`) |
+
+<Warning>
+Cluster resources (Tasks, Pipelines, etc.) do not have immutable references like Git commit hashes or bundle digests. Automatic caching is disabled by default to prevent stale data.
+</Warning>
+
+Configure default cache mode:
+
+```yaml
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: cluster-resolver-config
+  namespace: tekton-pipelines-resolvers
+data:
+  default-cache-mode: "never"  # Recommended for mutable resources
+```
+
+### Global Cache Configuration
+
+```yaml
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: resolver-cache-config
+  namespace: tekton-pipelines-resolvers
+data:
+  max-size: "1000"
+  ttl: "5m"
+```
+
+## Usage Examples
+
+### Task Resolution
+
+```yaml
+apiVersion: tekton.dev/v1beta1
+kind: TaskRun
+metadata:
+  name: cluster-task-run
+spec:
+  taskRef:
+    resolver: cluster
+    params:
+    - name: kind
+      value: task
+    - name: name
+      value: some-task
+    - name: namespace
+      value: namespace-containing-task
+```
+
+### Task Resolution with Caching
+
+```yaml
+apiVersion: tekton.dev/v1beta1
+kind: TaskRun
+metadata:
+  name: cluster-task-cached
+spec:
+  taskRef:
+    resolver: cluster
+    params:
+    - name: kind
+      value: task
+    - name: name
+      value: some-task
+    - name: namespace
+      value: namespace-containing-task
+    - name: cache
+      value: always
+```
+
+### Task Resolution without Caching
+
+```yaml
+apiVersion: tekton.dev/v1beta1
+kind: TaskRun
+metadata:
+  name: cluster-task-no-cache
+spec:
+  taskRef:
+    resolver: cluster
+    params:
+    - name: kind
+      value: task
+    - name: name
+      value: some-task
+    - name: namespace
+      value: namespace-containing-task
+    - name: cache
+      value: never
+```
+
+### Pipeline Resolution
+
+```yaml
+apiVersion: tekton.dev/v1beta1
+kind: PipelineRun
+metadata:
+  name: cluster-pipeline-run
+spec:
+  pipelineRef:
+    resolver: cluster
+    params:
+    - name: kind
+      value: pipeline
+    - name: name
+      value: some-pipeline
+    - name: namespace
+      value: namespace-containing-pipeline
+```
+
+### StepAction Resolution
+
+```yaml
+apiVersion: tekton.dev/v1beta1
+kind: Task
+metadata:
+  name: task-with-stepaction
+spec:
+  steps:
+  - name: step-action-example
+    ref:
+      resolver: cluster
+      params:
+      - name: kind
+        value: stepaction
+      - name: name
+        value: some-stepaction
+      - name: namespace
+        value: namespace-containing-stepaction
+```
+
+### Cross-Namespace Task Reuse
+
+```yaml
+apiVersion: tekton.dev/v1beta1
+kind: TaskRun
+metadata:
+  name: shared-task-run
+  namespace: team-a
+spec:
+  taskRef:
+    resolver: cluster
+    params:
+    - name: kind
+      value: task
+    - name: name
+      value: shared-build-task
+    - name: namespace
+      value: shared-tasks  # Task from shared-tasks namespace
+```
+
+## ResolutionRequest Status
+
+The `ResolutionRequest.Status.RefSource` field captures source metadata:
+
+```yaml
+status:
+  refSource:
+    uri: /apis/tekton.dev/v1beta1/namespaces/default/task/a-simple-task@3b82d8c4-f89e-47ea-a49d-3be0dca4c038
+    digest:
+      sha256: 245b1aa918434cc8195b4d4d026f2e43df09199e2ed31d4dfd9c2cbea1c7ce54
+  data: YXBpVmVyc2lvbjog...
+```
+
+<CardGroup cols={2}>
+  <Card title="uri" icon="link">
+    Namespace-scoped resource URI with UID (format: `<resource-uri>@<uid>`)
+  </Card>
+  <Card title="digest" icon="fingerprint">
+    SHA-256 checksum of the resource spec content
+  </Card>
+</CardGroup>
+
+### Understanding the URI Format
+
+The URI follows Kubernetes resource URI conventions:
+
+```
+/apis/GROUP/VERSION/namespaces/NAMESPACE/RESOURCETYPE/NAME@UID
+```
+
+Example:
+```
+/apis/tekton.dev/v1beta1/namespaces/default/task/build-task@3b82d8c4-f89e-47ea-a49d-3be0dca4c038
+```
+
+### Understanding the Digest
+
+The digest is a hex-encoded SHA-256 checksum of the resource's **spec field only**. This enables supply chain verification tools like Tekton Chains to detect malicious changes, even if metadata (like annotations) is modified.
+
+<Note>
+The entrypoint field is empty because path information is already available in the URI field.
+</Note>
+
+## Use Cases
+
+<CardGroup cols={2}>
+  <Card title="Shared Libraries" icon="books">
+    Create a central namespace with reusable Tasks and Pipelines
+  </Card>
+  <Card title="Multi-Tenancy" icon="users">
+    Allow teams to share common resources across namespaces
+  </Card>
+  <Card title="Platform Teams" icon="gears">
+    Platform teams provide standard tasks to application teams
+  </Card>
+  <Card title="Testing" icon="flask">
+    Reference test resources from dedicated test namespaces
+  </Card>
+</CardGroup>
+
+## Best Practices
+
+<CardGroup cols={2}>
+  <Card title="Access Control" icon="shield">
+    Use `allowed-namespaces` to restrict which namespaces can be accessed
+  </Card>
+  <Card title="Cache Carefully" icon="warning">
+    Only use `cache: always` for truly immutable resources
+  </Card>
+  <Card title="Naming Conventions" icon="tag">
+    Use clear naming conventions for shared resources
+  </Card>
+  <Card title="RBAC" icon="key">
+    Ensure the resolver ServiceAccount has read access to target namespaces
+  </Card>
+</CardGroup>
+
+<Tip>
+The Cluster Resolver is ideal for creating a "library" namespace of reusable Tasks and Pipelines that multiple teams can reference.
+</Tip>

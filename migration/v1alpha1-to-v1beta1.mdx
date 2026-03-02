@@ -1,0 +1,154 @@
+---
+title: "v1alpha1 to v1beta1 Migration"
+description: "Guide for migrating from Tekton v1alpha1 to v1beta1"
+---
+
+This guide describes the differences between `v1alpha1` Tekton entities and their `v1beta1` counterparts, including how to replace `PipelineResources` with `Tasks` from the Tekton Catalog.
+
+## Changes to Fields
+
+In Tekton `v1beta1`, the following fields have been changed:
+
+| Old Field | New Field |
+| --------- | --------- |
+| `spec.inputs.params` | `spec.params` |
+| `spec.inputs` | Removed from `Tasks` |
+| `spec.outputs` | Removed from `Tasks` |
+| `spec.inputs.resources` | `spec.resources.inputs` |
+| `spec.outputs.resources` | `spec.resources.outputs` |
+
+## Changes to Input Parameters
+
+<Warning>
+Input parameters have been moved from `spec.inputs.params` to `spec.params`.
+</Warning>
+
+In Tekton `v1beta1`, input parameters have been moved from `spec.inputs.params` to `spec.params`.
+
+<Tabs>
+  <Tab title="v1alpha1">
+    ```yaml
+    # Task.yaml
+    spec:
+      inputs:
+        params:
+          - name: ADDR
+            description: Address to curl.
+            type: string
+    
+    # TaskRun.yaml
+    spec:
+      inputs:
+        params:
+          - name: ADDR
+            value: https://example.com/foo.json
+    ```
+  </Tab>
+  <Tab title="v1beta1">
+    ```yaml
+    # Task.yaml
+    spec:
+      params:
+        - name: ADDR
+          description: Address to curl.
+          type: string
+    
+    # TaskRun.yaml
+    spec:
+      params:
+        - name: ADDR
+          value: https://example.com/foo.json
+    ```
+  </Tab>
+</Tabs>
+
+## Changes to PipelineResources
+
+<Warning>
+`PipelineResources` have been moved from `spec.input.resources` and `spec.output.resources` to `spec.resources.inputs` and `spec.resources.outputs`.
+</Warning>
+
+In Tekton `v1beta1`, `PipelineResources` have been moved from `spec.input.resources` and `spec.output.resources` to `spec.resources.inputs` and `spec.resources.outputs`, respectively.
+
+<Tabs>
+  <Tab title="v1alpha1">
+    ```yaml
+    # Task.yaml
+    spec:
+      inputs:
+        resources:
+          - name: skaffold
+            type: git
+      outputs:
+        resources:
+          - name: baked-image
+            type: image
+    
+    # TaskRun.yaml
+    spec:
+      inputs:
+        resources:
+          - name: skaffold
+            resourceSpec:
+              type: git
+              params:
+                - name: revision
+                  value: v0.32.0
+                - name: url
+                  value: https://github.com/GoogleContainerTools/skaffold
+      outputs:
+        resources:
+          - name: baked-image
+            resourceSpec:
+              - type: image
+                params:
+                  - name: url
+                    value: gcr.io/foo/bar
+    ```
+  </Tab>
+  <Tab title="v1beta1">
+    ```yaml
+    # Task.yaml
+    spec:
+      resources:
+        inputs:
+          - name: src-repo
+            type: git
+        outputs:
+          - name: baked-image
+            type: image
+    
+    # TaskRun.yaml
+    spec:
+      resources:
+        inputs:
+          - name: src-repo
+            resourceSpec:
+              type: git
+              params:
+                - name: revision
+                  value: main
+                - name: url
+                  value: https://github.com/tektoncd/pipeline
+        outputs:
+          - name: baked-image
+            resourceSpec:
+              - type: image
+                params:
+                  - name: url
+                    value: gcr.io/foo/bar
+    ```
+  </Tab>
+</Tabs>
+
+## Replacing PipelineResources with Tasks
+
+See [Replacing PipelineResources with Tasks](https://github.com/tektoncd/pipeline/blob/main/docs/pipelineresources.md#replacing-pipelineresources-with-tasks) for information and examples on how to replace the following PipelineResource types:
+
+- Git resources
+- Pull request resources
+- GCS resources
+- Image resources
+- Cluster resources
+
+For detailed examples and recommended Tasks from the Tekton Catalog, refer to the official documentation.

@@ -1,0 +1,60 @@
+---
+title: "Basic Task"
+description: "A simple task that runs steps in order"
+---
+
+This example demonstrates the most basic Tekton Task structure, showing how steps are executed sequentially.
+
+## Example
+
+This TaskRun executes two steps in order. The first step creates a file, and the second step verifies its existence:
+
+```yaml
+apiVersion: tekton.dev/v1
+kind: TaskRun
+metadata:
+  generateName: steps-run-in-order-
+spec:
+  taskSpec:
+    steps:
+    - image: mirror.gcr.io/busybox
+      # NB: command is not set, so it must be looked up from the registry.
+      args: ['-c', 'sleep 3 && touch foo']
+    - image: mirror.gcr.io/busybox
+      args: ['-c', 'ls', 'foo']
+```
+
+## How It Works
+
+<Steps>
+  <Step title="First Step Runs">
+    The first step sleeps for 3 seconds, then creates a file named `foo`. The command is automatically looked up from the container image registry since no explicit `command` is specified.
+  </Step>
+  
+  <Step title="Second Step Executes">
+    After the first step completes successfully, the second step runs and lists the `foo` file to verify it was created.
+  </Step>
+  
+  <Step title="Sequential Execution">
+    Tekton guarantees that steps run in the order they're defined. The second step will not start until the first step completes.
+  </Step>
+</Steps>
+
+## Key Concepts
+
+- **Steps**: Individual units of execution within a Task
+- **Sequential Execution**: Steps run in order, one after another
+- **Shared Workspace**: Steps share the same filesystem, allowing them to pass data through files
+- **generateName**: Creates a unique name for each TaskRun instance
+
+## Expected Output
+
+When this TaskRun executes successfully:
+1. The first step completes after 3 seconds
+2. The second step finds the `foo` file
+3. The TaskRun status shows as "Succeeded"
+
+## Next Steps
+
+- Learn how to [add parameters to tasks](/examples/tasks/task-with-params)
+- Explore [using workspaces](/examples/tasks/task-with-workspaces) for more advanced data sharing

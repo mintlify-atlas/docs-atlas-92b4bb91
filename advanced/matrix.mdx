@@ -1,0 +1,485 @@
+---
+title: Matrix Execution
+description: Fan out Tasks in Pipelines using Matrix to run parallel combinations
+---
+
+Matrix is used to fan out Tasks in a Pipeline by generating combinations of parameters. This allows you to run the same Task multiple times with different parameter values in parallel.
+
+<Note>
+Matrix is a beta feature. Set `enable-api-fields` to `"beta"` to use this feature.
+</Note>
+
+## Overview
+
+A Matrix allows you to:
+- Generate parameter combinations automatically using `Matrix.Params`
+- Specify explicit combinations using `Matrix.Include`
+- Fan out both regular Tasks and Custom Tasks
+- Control concurrency of parallel executions
+- Aggregate results from all fanned-out TaskRuns
+
+## Generating Combinations
+
+Use `Matrix.Params` to automatically generate all combinations of the specified parameter values:
+
+```yaml
+matrix:
+  params:
+    - name: platform
+      value:
+      - linux
+      - mac
+    - name: browser
+      value:
+      - safari
+      - chrome
+```
+
+This generates four combinations:
+
+```json
+{ "platform": "linux", "browser": "safari" }
+{ "platform": "linux", "browser": "chrome"}
+{ "platform": "mac", "browser": "safari" }
+{ "platform": "mac", "browser": "chrome"}
+```
+
+## Adding Explicit Combinations
+
+Use `Matrix.Include` to add specific combinations or augment existing ones:
+
+```yaml
+matrix:
+  params:
+    - name: platform
+      value:
+      - linux
+      - mac
+    - name: browser
+      value:
+      - safari
+      - chrome
+  include:
+    - name: linux-url
+      params:
+        - name: platform
+          value: linux
+        - name: url
+          value: some-url
+    - name: non-existent-browser
+      params:
+        - name: browser
+          value: "i-do-not-exist"
+```
+
+The first `include` clause adds the `url` parameter to all combinations with `platform: linux`. The second adds a new combination:
+
+```json
+{ "platform": "linux", "browser": "safari", "url": "some-url" }
+{ "platform": "linux", "browser": "chrome", "url": "some-url"}
+{ "platform": "mac", "browser": "safari" }
+{ "platform": "mac", "browser": "chrome"}
+{ "browser": "i-do-not-exist"}
+```
+
+### Using Include Without Params
+
+You can use `Matrix.Include` alone to specify exact combinations without auto-generation:
+
+```yaml
+matrix:
+  include:
+    - name: build-1
+      params:
+        - name: IMAGE
+          value: "image-1"
+        - name: DOCKERFILE
+          value: "path/to/Dockerfile1"
+    - name: build-2
+      params:
+        - name: IMAGE
+          value: "image-2"
+        - name: DOCKERFILE
+          value: "path/to/Dockerfile2"
+    - name: build-3
+      params:
+        - name: IMAGE
+          value: "image-3"
+        - name: DOCKERFILE
+          value: "path/to/Dockerfile3"
+```
+
+This creates exactly three TaskRuns with the specified parameters.
+
+## Complete Example
+
+Here's a complete example that creates nine TaskRuns from a matrix of platforms and browsers:
+
+```yaml
+apiVersion: tekton.dev/v1beta1
+kind: Task
+metadata:
+  name: platform-browsers
+spec:
+  params:
+    - name: platform
+    - name: browser
+  steps:
+    - name: echo
+      image: alpine
+      script: |
+        echo "$(params.platform) and $(params.browser)"
+---
+apiVersion: tekton.dev/v1beta1
+kind: PipelineRun
+metadata:
+  generateName: matrixed-pr-
+spec:
+  serviceAccountName: 'default'
+  pipelineSpec:
+    tasks:
+      - name: platforms-and-browsers
+        matrix:
+          params:
+            - name: platform
+              value:
+                - linux
+                - mac
+                - windows
+            - name: browser
+              value:
+                - chrome
+                - safari
+                - firefox
+        taskRef:
+          name: platform-browsers
+```
+
+## Concurrency Control
+
+The default maximum number of TaskRuns from a Matrix is **256**. Configure this in `config-defaults.yaml`:
+
+```yaml
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: config-defaults
+data:
+  default-max-matrix-combinations-count: "1024"
+```
+
+<Warning>
+If a Matrix generates more TaskRuns than the configured maximum, the Pipeline validation will fail.
+</Warning>
+
+## Using Parameters
+
+### String and Array Replacements
+
+`Matrix.Params` supports replacements from Pipeline parameters:
+
+```yaml
+matrix:
+  params:
+  - name: param-one
+    value:
+    - $(params.foo) # string replacement
+    - $(params.bar[0]) # array element
+    - $(params.rad.key) # object property
+  - name: param-two
+    value: $(params.bar[*]) # whole array replacement
+```
+
+### Combining Params and Matrix
+
+You can use both `params` and `matrix` in a PipelineTask:
+
+```yaml
+apiVersion: tekton.dev/v1beta1
+kind: Pipeline
+metadata:
+  name: platform-browser-tests
+spec:
+  tasks:
+  - name: test
+    matrix:
+      params:
+        - name: browser
+          value:
+            - chrome
+            - safari
+            - firefox
+    params:
+      - name: platform
+        value: linux
+    taskRef:
+      name: browser-test
+```
+
+This executes three TaskRuns, all with `platform: linux` and different browser values.
+
+<Note>
+A parameter can be passed to either `matrix` or `params`, but not both.
+</Note>
+
+## Working with Results
+
+### Consuming Results in Matrix
+
+You can use results from previous Tasks to generate matrix combinations:
+
+```yaml
+tasks:
+- name: task-4
+  taskRef:
+    name: task-4
+  matrix:
+    params:
+    - name: values
+      value: $(tasks.task-1.results.whole-array[*])
+```
+
+### Emitting Results from Matrix
+
+Each TaskRun in a fanned-out PipelineTask can emit string results, which are aggregated into an array:
+
+```yaml
+apiVersion: tekton.dev/v1beta1
+kind: Pipeline
+metadata:
+  name: platform-browser-tests
+spec:
+  tasks:
+    - name: matrix-emitting-results
+      matrix:
+        params:
+          - name: platform
+            value:
+              - linux
+              - mac
+              - windows
+          - name: browser
+            value:
+              - chrome
+              - safari
+              - firefox
+      taskRef:
+        name: taskwithresults
+    - name: task-consuming-results
+      taskRef:
+        name: echoarrayurl
+      params:
+        - name: url
+          value: $(tasks.matrix-emitting-results.results.report-url[*])
+```
+
+| Result Type in Task | Consumer Parameter Type | Syntax |
+|---------------------|------------------------|--------|
+| string              | array                  | `$(tasks.<name>.results.<result>[*])` |
+| array               | Not Supported          | Not Supported |
+| object              | Not Supported          | Not Supported |
+
+## Context Variables
+
+### Matrix Length
+
+Access the total number of TaskRuns created by a matrix:
+
+```yaml
+- name: matrixed-echo-length
+  runAfter:
+    - matrix-emitting-results
+  params:
+    - name: matrixlength
+      value: $(tasks.matrix-emitting-results.matrix.length)
+```
+
+### Aggregated Results Length
+
+Access the length of aggregated result arrays:
+
+```yaml
+- name: matrixed-echo-results-length
+  runAfter:
+    - matrix-emitting-results
+  params:
+    - name: matrixlength
+      value: $(tasks.matrix-emitting-results.matrix.a-result.length)
+```
+
+## Display Names
+
+Customize the display name of each matrix instance using parameters:
+
+```yaml
+pipelineSpec:
+  tasks:
+    - name: platforms-and-browsers
+      displayName: "Platforms and Browsers: $(params.platform) and $(params.browser)"
+      matrix:
+        params:
+          - name: platform
+            value:
+              - linux
+              - mac
+              - windows
+          - name: browser
+            value:
+              - chrome
+              - safari
+              - firefox
+      taskRef:
+        name: platform-browsers
+```
+
+The `displayName` appears in `pipelineRun.status.childReferences`:
+
+```json
+[
+  {
+    "apiVersion": "tekton.dev/v1",
+    "displayName": "Platforms and Browsers: linux and chrome",
+    "kind": "TaskRun",
+    "name": "matrixed-pr-vcx79-platforms-and-browsers-0",
+    "pipelineTaskName": "platforms-and-browsers"
+  }
+]
+```
+
+You can also specify names in `matrix.include[]` which take precedence over `displayName`:
+
+```yaml
+matrix:
+  include:
+    - name: "Platform: $(params.platform)"
+      params:
+        - name: platform
+          value: linux111
+  params:
+    - name: browser
+      value: chrome
+```
+
+## Retries
+
+When a PipelineTask with a Matrix specifies `retries`, each individual TaskRun is retried independently:
+
+```yaml
+apiVersion: tekton.dev/v1beta1
+kind: PipelineRun
+metadata:
+  generateName: matrixed-pr-with-retries-
+spec:
+  pipelineSpec:
+    tasks:
+      - name: matrix-and-params
+        matrix:
+          params:
+            - name: platform
+              value:
+                - linux
+                - mac
+                - windows
+        params:
+          - name: browser
+            value: chrome
+        retries: 1
+        taskSpec:
+          params:
+            - name: platform
+            - name: browser
+          steps:
+            - name: echo
+              image: alpine
+              script: |
+                echo "$(params.platform) and $(params.browser)"
+                exit 1
+```
+
+This creates three TaskRuns, each retried once upon failure.
+
+## Advanced Example: Go Build Matrix
+
+Here's a complex example using both `Matrix.Params` and `Matrix.Include` for Go builds across architectures:
+
+```yaml
+matrix:
+  params:
+    - name: GOARCH
+      value:
+        - "linux/amd64"
+        - "linux/ppc64le"
+        - "linux/s390x"
+    - name: version
+      value:
+        - "go1.17"
+        - "go1.18.1"
+  include:
+    - name: common-package
+      params:
+        - name: package
+          value: "path/to/common/package/"
+    - name: s390x-no-race
+      params:
+        - name: GOARCH
+          value: "linux/s390x"
+        - name: flags
+          value: "-cover -v"
+    - name: go117-context
+      params:
+        - name: version
+          value: "go1.17"
+        - name: context
+          value: "path/to/go117/context"
+    - name: non-existent-arch
+      params:
+          - name: GOARCH
+            value: "I-do-not-exist"
+```
+
+This generates seven TaskRuns with the following combinations:
+
+```json
+{ "GOARCH": "linux/amd64", "version": "go1.17", "package": "path/to/common/package/", "context": "path/to/go117/context" }
+{ "GOARCH": "linux/amd64", "version": "go1.18.1", "package": "path/to/common/package/" }
+{ "GOARCH": "linux/ppc64le", "version": "go1.17", "package": "path/to/common/package/", "context": "path/to/go117/context" }
+{ "GOARCH": "linux/ppc64le", "version": "go1.18.1", "package": "path/to/common/package/" }
+{ "GOARCH": "linux/s390x", "version": "go1.17", "package": "path/to/common/package/", "flags": "-cover -v", "context": "path/to/go117/context" }
+{ "GOARCH": "linux/s390x", "version": "go1.18.1", "package": "path/to/common/package/", "flags": "-cover -v" }
+{ "GOARCH": "I-do-not-exist" }
+```
+
+## Matrix with Custom Tasks
+
+Matrix also works with Custom Tasks, creating multiple Runs instead of TaskRuns:
+
+```yaml
+apiVersion: tekton.dev/v1beta1
+kind: PipelineRun
+metadata:
+  generateName: matrixed-pr-
+spec:
+  serviceAccountName: 'default'
+  pipelineSpec:
+    tasks:
+      - name: platforms-and-browsers
+        matrix:
+          params:
+            - name: type
+              value:
+                - "type(1)"
+                - "type(1.0)"
+            - name: colors
+              value:
+                - "{'blue': '0x000080', 'red': '0xFF0000'}['blue']"
+                - "{'blue': '0x000080', 'red': '0xFF0000'}['red']"
+            - name: bool
+              value:
+                - "type(1) == int"
+                - "{'blue': '0x000080', 'red': '0xFF0000'}['red'] == '0xFF0000'"
+        taskRef:
+          apiVersion: cel.tekton.dev/v1alpha1
+          kind: CEL
+```
+
+This example uses the CEL Custom Task and creates eight Runs with different CEL expressions.

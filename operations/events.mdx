@@ -1,0 +1,368 @@
+---
+title: Events
+description: Kubernetes events and CloudEvents in Tekton Pipelines
+---
+
+Tekton emits events to notify external systems about TaskRun and PipelineRun execution status. Two event types are supported: Kubernetes events and CloudEvents.
+
+## Kubernetes Events
+
+Tekton controllers emit standard [Kubernetes events](https://kubernetes.io/docs/reference/generated/kubernetes-api/v1.18/#event-v1-core) that can be retrieved using `kubectl describe`.
+
+### TaskRun Events
+
+TaskRuns emit events for the following reasons:
+
+<ParamField path="Started" type="event">
+  Emitted when the TaskRun is first picked by the reconciler from the work queue (after successful webhook validation).
+  
+  **Does not indicate Step execution.** Steps execute only after:
+  - Task and resource validation succeeds
+  - Associated Conditions checks succeed
+  - Pod scheduling succeeds
+</ParamField>
+
+<ParamField path="Succeeded" type="event">
+  Emitted when all steps in the TaskRun execute successfully, including Tekton-injected post-steps.
+</ParamField>
+
+<ParamField path="Failed" type="event">
+  Emitted when:
+  - A Step fails
+  - TaskRun times out
+  - TaskRun is cancelled
+  - Validation fails (TaskRun cannot execute)
+</ParamField>
+
+### PipelineRun Events
+
+PipelineRuns emit events for the following reasons:
+
+<ParamField path="Started" type="event">
+  Emitted when the PipelineRun is first picked by the reconciler from the work queue (after successful webhook validation).
+  
+  **Does not indicate Step execution.** Steps execute after validation succeeds for the Pipeline and all associated Tasks and Resources.
+</ParamField>
+
+<ParamField path="Running" type="event">
+  Emitted when the PipelineRun passes validation and begins execution.
+</ParamField>
+
+<ParamField path="Succeeded" type="event">
+  Emitted when all Tasks reachable via the DAG execute successfully.
+</ParamField>
+
+<ParamField path="Failed" type="event">
+  Emitted when:
+  - A Task fails
+  - PipelineRun times out
+  - PipelineRun is cancelled
+  - Validation fails (PipelineRun cannot execute)
+</ParamField>
+
+### Viewing Kubernetes Events
+
+View events for a TaskRun:
+
+```bash
+kubectl describe taskrun my-taskrun
+```
+
+View events for a PipelineRun:
+
+```bash
+kubectl describe pipelinerun my-pipelinerun
+```
+
+View all events in a namespace:
+
+```bash
+kubectl get events -n tekton-pipelines --sort-by='.lastTimestamp'
+```
+
+## CloudEvents
+
+When configured with a sink, Tekton emits [CloudEvents](https://cloudevents.io/) for run lifecycle changes.
+
+### CloudEvents Configuration
+
+Configure CloudEvents in the `config-events` ConfigMap:
+
+```yaml
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: config-events
+  namespace: tekton-pipelines
+data:
+  formats: "tektonv1"
+  sink: "https://events.example.com/tekton"
+```
+
+<ParamField path="formats" type="string" default="tektonv1">
+  Comma-separated list of event formats. Currently only `tektonv1` is supported.
+  
+  <Note>An empty string is not valid. To disable events, omit the sink.</Note>
+</ParamField>
+
+<ParamField path="sink" type="string">
+  Event sink URL for TaskRun, PipelineRun, and CustomRun events.
+  
+  ```yaml
+  data:
+    sink: "https://my-sink-url.example.com"
+  ```
+  
+  <Note>This setting supersedes `default-cloud-events-sink` from the `config-defaults` ConfigMap.</Note>
+</ParamField>
+
+### Legacy Configuration
+
+The deprecated `config-defaults` configuration is still supported:
+
+```yaml
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: config-defaults
+  namespace: tekton-pipelines
+data:
+  default-cloud-events-sink: "https://my-sink-url"
+```
+
+<Warning>
+The `default-cloud-events-sink` option in `config-defaults` is deprecated and will be removed. Use the `config-events` ConfigMap instead.
+</Warning>
+
+### CustomRun Events
+
+CloudEvents for CustomRuns require additional configuration:
+
+```yaml
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: feature-flags
+  namespace: tekton-pipelines
+data:
+  send-cloudevents-for-runs: "true"
+```
+
+<Note>
+CustomRun CloudEvents use an ephemeral cache to avoid duplicates. Controller restarts reset the cache and may result in duplicate events.
+</Note>
+
+### CloudEvent Types
+
+Tekton emits the following CloudEvent types:
+
+| Resource | Event | Event Type |
+|----------|-------|------------|
+| TaskRun | Started | `dev.tekton.event.taskrun.started.v1` |
+| TaskRun | Running | `dev.tekton.event.taskrun.running.v1` |
+| TaskRun | Condition Change while Running | `dev.tekton.event.taskrun.unknown.v1` |
+| TaskRun | Succeeded | `dev.tekton.event.taskrun.successful.v1` |
+| TaskRun | Failed | `dev.tekton.event.taskrun.failed.v1` |
+| PipelineRun | Started | `dev.tekton.event.pipelinerun.started.v1` |
+| PipelineRun | Running | `dev.tekton.event.pipelinerun.running.v1` |
+| PipelineRun | Condition Change while Running | `dev.tekton.event.pipelinerun.unknown.v1` |
+| PipelineRun | Succeeded | `dev.tekton.event.pipelinerun.successful.v1` |
+| PipelineRun | Failed | `dev.tekton.event.pipelinerun.failed.v1` |
+| Run | Started | `dev.tekton.event.run.started.v1` |
+| Run | Running | `dev.tekton.event.run.running.v1` |
+| Run | Succeeded | `dev.tekton.event.run.successful.v1` |
+| Run | Failed | `dev.tekton.event.run.failed.v1` |
+
+### CloudEvent Format
+
+CloudEvents follow the [CloudEvents specification](https://github.com/cloudevents/spec/blob/main/cloudevents/spec.md).
+
+#### HTTP Headers
+
+Context fields are included as HTTP headers:
+
+```http
+Ce-Id: 77f78ae7-ff6d-4e39-9d05-b9a0b7850527
+Ce-Source: /apis/tekton.dev/v1beta1/namespaces/default/taskruns/curl-run-6gplk
+Ce-Specversion: 1.0
+Ce-Subject: curl-run-6gplk
+Ce-Time: 2021-01-29T14:47:58.157819Z
+Ce-Type: dev.tekton.event.taskrun.unknown.v1
+Content-Type: application/json
+```
+
+#### Payload
+
+The payload is JSON with a single root key (`taskRun` or `pipelineRun`) containing the complete resource spec and status:
+
+```json
+{
+  "taskRun": {
+    "metadata": {
+      "name": "curl-run-6gplk",
+      "namespace": "default",
+      "creationTimestamp": "2021-01-29T14:47:57Z",
+      "labels": {
+        "app.kubernetes.io/managed-by": "tekton-pipelines",
+        "tekton.dev/task": "curl"
+      }
+    },
+    "spec": {
+      "params": [
+        {
+          "name": "url",
+          "value": "https://example.com"
+        }
+      ],
+      "serviceAccountName": "default",
+      "taskRef": {
+        "kind": "Task",
+        "name": "curl"
+      },
+      "timeout": "1h0m0s"
+    },
+    "status": {
+      "conditions": [
+        {
+          "lastTransitionTime": "2021-01-29T14:47:58Z",
+          "message": "pod status \"Initialized\":\"False\"",
+          "reason": "Pending",
+          "status": "Unknown",
+          "type": "Succeeded"
+        }
+      ],
+      "podName": "curl-run-6gplk-pod",
+      "startTime": "2021-01-29T14:47:57Z"
+    }
+  }
+}
+```
+
+### Event Delivery
+
+CloudEvents are sent in a **parallel routine** to allow retries without blocking the reconciler:
+
+- Events are sent when the `Succeeded` condition changes (state, reason, or message)
+- Retries use **exponential back-off** strategy
+- Events are **not guaranteed** to arrive in order due to retries
+
+## Event Sink Implementation Examples
+
+### Simple HTTP Sink
+
+```python
+from flask import Flask, request
+import json
+
+app = Flask(__name__)
+
+@app.route('/tekton', methods=['POST'])
+def handle_event():
+    headers = dict(request.headers)
+    event_type = headers.get('Ce-Type')
+    event_id = headers.get('Ce-Id')
+    
+    payload = request.json
+    
+    print(f"Received event: {event_type} (ID: {event_id})")
+    print(json.dumps(payload, indent=2))
+    
+    return '', 204
+
+if __name__ == '__main__':
+    app.run(port=8080)
+```
+
+### Knative Event Sink
+
+```yaml
+apiVersion: serving.knative.dev/v1
+kind: Service
+metadata:
+  name: tekton-event-handler
+  namespace: default
+spec:
+  template:
+    spec:
+      containers:
+      - image: gcr.io/my-project/event-handler:latest
+        env:
+        - name: EVENT_SOURCE
+          value: "tekton-pipelines"
+---
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: config-events
+  namespace: tekton-pipelines
+data:
+  sink: "http://tekton-event-handler.default.svc.cluster.local"
+```
+
+## Filtering Events
+
+To process only specific event types in your sink:
+
+```javascript
+app.post('/tekton', (req, res) => {
+  const eventType = req.headers['ce-type'];
+  
+  // Only process failed events
+  if (eventType.includes('.failed.')) {
+    const resource = req.body.taskRun || req.body.pipelineRun;
+    console.log(`Failed: ${resource.metadata.name}`);
+    
+    // Send notification, create ticket, etc.
+  }
+  
+  res.status(204).send();
+});
+```
+
+## Troubleshooting
+
+### No Events Received
+
+1. Verify sink is configured:
+   ```bash
+   kubectl get cm config-events -n tekton-pipelines -o yaml
+   ```
+
+2. Check controller logs:
+   ```bash
+   kubectl logs -n tekton-pipelines -l app=tekton-pipelines-controller
+   ```
+
+3. Test sink connectivity from cluster:
+   ```bash
+   kubectl run -it --rm debug --image=curlimages/curl --restart=Never -- \
+     curl -v https://your-sink-url
+   ```
+
+### Duplicate Events
+
+Duplicate events can occur due to:
+- Controller restarts (CustomRun cache reset)
+- Network retry logic
+- Event delivery retries
+
+Implement idempotency in your event handler using the `Ce-Id` header.
+
+### Missing Events
+
+Events may be missed if:
+- Sink is unavailable during event emission
+- Sink returns non-2xx status codes
+- Network issues prevent delivery
+
+Implement proper error handling and consider using a message queue for critical events.
+
+## Best Practices
+
+1. **Use idempotent event handlers** - Events may be delivered more than once
+2. **Handle all event types** - Don't assume only specific types will be received
+3. **Implement proper error handling** - Return appropriate HTTP status codes
+4. **Use async processing** - Respond quickly (< 30s) to avoid timeouts
+5. **Log event IDs** - Use `Ce-Id` for debugging and deduplication
+6. **Monitor sink availability** - High availability sinks prevent event loss
+7. **Consider event ordering** - Don't rely on events arriving in chronological order

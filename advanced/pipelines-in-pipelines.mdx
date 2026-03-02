@@ -1,0 +1,241 @@
+---
+title: Pipelines in Pipelines
+description: Define and execute Pipelines within Pipelines alongside Tasks
+---
+
+Pipelines in Pipelines is a mechanism to define and execute Pipelines within Pipelines, alongside Tasks and Custom Tasks, enabling more complex workflow compositions.
+
+<Warning>
+Pipelines in Pipelines is not yet an alpha feature. While you can specify `pipelineRef` or `pipelineSpec` in a PipelineTask when `enable-api-fields` is set to `"alpha"`, this feature is not yet supported or implemented. Specifying a `pipelineRef` or `pipelineSpec` will not cause the Pipeline to run at this time.
+</Warning>
+
+## Overview
+
+Pipelines in Pipelines allows you to compose complex workflows by nesting Pipeline definitions. This provides:
+
+- Better organization of complex workflows
+- Reusability of Pipeline definitions
+- Composition of Pipelines alongside Tasks and Custom Tasks
+- Hierarchical Pipeline structures
+
+For more background and design details, refer to [TEP-0056](https://github.com/tektoncd/community/blob/main/teps/0056-pipelines-in-pipelines.md).
+
+## Specifying pipelineRef
+
+Define Pipelines in Pipelines at authoring time by using the `pipelineRef` field in a PipelineTask, similar to how you use `taskRef`.
+
+<Tabs>
+  <Tab title="Using pipelineRef">
+
+Reference an existing Pipeline by name:
+
+```yaml
+apiVersion: tekton.dev/v1
+kind: Pipeline
+metadata:
+  name: security-scans
+spec:
+  tasks:
+    - name: scorecards
+      taskRef:
+        name: scorecards
+    - name: codeql
+      taskRef:
+        name: codeql
+---
+apiVersion: tekton.dev/v1
+kind: Pipeline
+metadata:
+  name: clone-scan-notify
+spec:
+  tasks:
+    - name: git-clone
+      taskRef:
+        name: git-clone
+    - name: security-scans
+      pipelineRef:
+        name: security-scans
+    - name: notification
+      taskRef:
+        name: notification
+```
+
+  </Tab>
+  <Tab title="Using pipelineSpec">
+
+Embed the Pipeline specification directly:
+
+```yaml
+apiVersion: tekton.dev/v1
+kind: Pipeline
+metadata:
+  name: clone-scan-notify
+spec:
+  tasks:
+    - name: git-clone
+      taskRef:
+        name: git-clone
+    - name: security-scans
+      pipelineSpec:
+        tasks:
+          - name: scorecards
+            taskRef:
+              name: scorecards
+          - name: codeql
+            taskRef:
+              name: codeql
+    - name: notification
+      taskRef:
+        name: notification
+```
+
+  </Tab>
+</Tabs>
+
+In the `clone-scan-notify` Pipeline example above, the pipeline includes three tasks: `git-clone` (a regular Task), `security-scans` (a nested Pipeline that runs scorecards and codeql), and `notification` (a regular Task).
+
+Using `pipelineSpec` instead of `pipelineRef` embeds the Pipeline definition directly, avoids name collisions in the namespace, and enables fetching the entire Pipeline definition in a single API request.
+
+## Parameters
+
+Pipelines in Pipelines consume parameters the same way as Tasks in Pipelines:
+
+```yaml
+apiVersion: tekton.dev/v1
+kind: Pipeline
+metadata:
+  name: clone-scan-notify
+spec:
+  params:
+    - name: repo
+      value: $(params.repo)
+  tasks:
+    - name: git-clone
+      params:
+        - name: repo
+          value: $(params.repo)
+      taskRef:
+        name: git-clone
+    - name: security-scans
+      params:
+        - name: repo
+          value: $(params.repo)
+      pipelineRef:
+        name: security-scans
+    - name: notification
+      taskRef:
+        name: notification
+```
+
+Parameters flow from the parent Pipeline to nested Pipelines just as they flow to Tasks.
+
+## Use Cases
+
+### Organizing Complex Workflows
+
+Break down large Pipelines into logical sub-Pipelines:
+
+```yaml
+apiVersion: tekton.dev/v1
+kind: Pipeline
+metadata:
+  name: complete-ci-cd
+spec:
+  tasks:
+    - name: source-preparation
+      pipelineRef:
+        name: git-operations
+    - name: build-and-test
+      pipelineRef:
+        name: build-pipeline
+      runAfter:
+        - source-preparation
+    - name: security-scanning
+      pipelineRef:
+        name: security-scans
+      runAfter:
+        - build-and-test
+    - name: deployment
+      pipelineRef:
+        name: deploy-pipeline
+      runAfter:
+        - security-scanning
+```
+
+### Reusing Pipeline Logic
+
+Define common Pipeline patterns once and reuse them:
+
+```yaml
+apiVersion: tekton.dev/v1
+kind: Pipeline
+metadata:
+  name: test-suite
+spec:
+  tasks:
+    - name: unit-tests
+      taskRef:
+        name: run-unit-tests
+    - name: integration-tests
+      taskRef:
+        name: run-integration-tests
+    - name: e2e-tests
+      taskRef:
+        name: run-e2e-tests
+---
+apiVersion: tekton.dev/v1
+kind: Pipeline
+metadata:
+  name: frontend-build
+spec:
+  tasks:
+    - name: build
+      taskRef:
+        name: npm-build
+    - name: tests
+      pipelineRef:
+        name: test-suite
+      runAfter:
+        - build
+---
+apiVersion: tekton.dev/v1
+kind: Pipeline
+metadata:
+  name: backend-build
+spec:
+  tasks:
+    - name: build
+      taskRef:
+        name: go-build
+    - name: tests
+      pipelineRef:
+        name: test-suite
+      runAfter:
+        - build
+```
+
+Both `frontend-build` and `backend-build` reuse the same `test-suite` Pipeline.
+
+## Current Limitations
+
+<Warning>
+This feature is currently not implemented. The following limitations apply:
+
+- Specifying `pipelineRef` or `pipelineSpec` will not execute the nested Pipeline
+- The feature flag must be set to `"alpha"` to validate the syntax
+- No PipelineRuns will be created for nested Pipelines
+- Status reporting for nested Pipelines is not available
+
+This documentation describes the intended design. Check the Tekton release notes for implementation status updates.
+</Warning>
+
+## Future Capabilities
+
+When implemented, Pipelines in Pipelines will support:
+
+- Passing workspaces to nested Pipelines
+- Consuming results from nested Pipelines
+- Conditional execution of nested Pipelines
+- Matrix execution of nested Pipelines
+- Finally tasks in nested Pipelines
+- Timeout and retry configuration for nested Pipelines

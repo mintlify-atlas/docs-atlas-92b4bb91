@@ -1,0 +1,170 @@
+---
+title: "Parallel Tasks"
+description: "Running tasks in parallel with shared workspaces"
+---
+
+Tekton can run tasks in parallel when they don't have dependencies on each other. This example shows a pipeline with a diamond-shaped dependency graph.
+
+## Example
+
+This pipeline demonstrates both sequential and parallel task execution:
+
+```
+            -- (upper) -- (reporter)
+          /                         \
+ (starter)                           (validator)
+          \                         /
+            -- (lower) ------------
+```
+
+The `upper` and `lower` tasks run in parallel after `starter` completes.
+
+```yaml
+apiVersion: tekton.dev/v1
+kind: Pipeline
+metadata:
+  name: parallel-pipeline
+spec:
+  params:
+    - name: message
+      type: string
+
+  workspaces:
+    - name: ws
+
+  tasks:
+    - name: starter          # Tasks that does not declare a runAfter property
+      taskRef:               # will start execution immediately
+        name: persist-param
+      params:
+        - name: message
+          value: $(params.message)
+      workspaces:
+        - name: task-ws
+          workspace: ws
+          subPath: init
+
+    - name: upper
+      runAfter:               # Note the use of runAfter here to declare that this task
+        - starter             # depends on a previous task
+      taskRef:
+        name: to-upper
+      params:
+        - name: input-path
+          value: init/message
+      workspaces:
+        - name: w
+          workspace: ws
+
+    - name: lower
+      runAfter:
+        - starter
+      taskRef:
+        name: to-lower
+      params:
+        - name: input-path
+          value: init/message
+      workspaces:
+        - name: w
+          workspace: ws
+
+    - name: reporter          # This task does not use workspace and may be scheduled to
+      runAfter:               # any Node in the cluster.
+        - upper
+      taskRef:
+        name: result-reporter
+      params:
+        - name: result-to-report
+          value: $(tasks.upper.results.message)  # A result from a previous task is used as param
+
+    - name: validator         # This task validate the output from upper and lower Task
+      runAfter:               # It does not strictly depend on the reporter Task
+        - reporter            # But you may want to skip this task if the reporter Task fail
+        - lower
+      taskRef:
+        name: validator
+      workspaces:
+        - name: files
+          workspace: ws
+```
+
+## How It Works
+
+<Steps>
+  <Step title="Starter Task Runs First">
+    The `starter` task has no `runAfter` clause, so it begins immediately. It writes the message parameter to a file in the shared workspace.
+  </Step>
+  
+  <Step title="Upper and Lower Run in Parallel">
+    Both `upper` and `lower` tasks declare `runAfter: [starter]`, so they wait for `starter` to complete. Since they don't depend on each other, they run in parallel. Both read from the shared workspace and transform the message.
+  </Step>
+  
+  <Step title="Reporter Runs After Upper">
+    The `reporter` task waits for `upper` to complete (via `runAfter`) and uses its result. It doesn't use a workspace, so it can be scheduled on any node.
+  </Step>
+  
+  <Step title="Validator Runs Last">
+    The `validator` task waits for both `reporter` and `lower` to complete. It validates the outputs from both the `upper` and `lower` transformations.
+  </Step>
+</Steps>
+
+## Task Execution Timeline
+
+```
+Time →
+
+1. [starter]
+2.    [upper] [lower]     ← Parallel execution
+3.       [reporter]
+4.          [validator]
+```
+
+## Workspace Sharing
+
+All tasks that use workspaces share the same underlying storage:
+
+- **starter**: Writes to `init/message`
+- **upper**: Reads from `init/message`, writes to `upper`
+- **lower**: Reads from `init/message`, writes to `lower`
+- **validator**: Reads from both `upper` and `lower`
+
+<Note>
+  Tasks that share a workspace are scheduled to the same node using an Affinity Assistant (unless disabled). This ensures the shared volume is accessible.
+</Note>
+
+## Workspace Subpaths
+
+The pipeline uses subpaths to organize data within a single workspace:
+
+```yaml
+workspaces:
+  - name: task-ws
+    workspace: ws
+    subPath: init    # Task writes to ws/init/
+```
+
+This allows different tasks to use different directories within the same volume.
+
+## Expected Output
+
+With parameter `message: "Hello Tekton"`:
+
+1. **starter** writes: `Hello Tekton`
+2. **upper** produces: `HELLO TEKTON`
+3. **lower** produces: `hello tekton`
+4. **reporter** prints: `HELLO TEKTON`
+5. **validator** verifies both transformations
+
+## Key Concepts
+
+- **Parallel Execution**: Tasks without dependencies run simultaneously
+- **runAfter**: Explicitly declare task dependencies
+- **Shared Workspaces**: Multiple tasks can read/write to the same workspace
+- **Affinity Assistant**: Schedules workspace-using tasks to the same node
+- **Subpaths**: Organize data within a workspace using directory paths
+- **Task Results vs Workspaces**: Results for small data, workspaces for files and large data
+
+## Next Steps
+
+- See a [real-world multi-stage pipeline](/examples/real-world/multi-stage-pipeline)
+- Learn about [building Docker images](/examples/real-world/build-docker-image)

@@ -1,0 +1,447 @@
+---
+title: Variable Substitution
+description: Use variables to pass data between Tasks and customize Pipeline execution
+---
+
+Tekton supports variable substitution to pass data dynamically within Tasks and Pipelines. This guide shows you how to use variables effectively in your workflows.
+
+## Overview
+
+Variable substitution allows you to:
+
+- Access parameter values at runtime
+- Reference Task results in subsequent Tasks
+- Use context information about the TaskRun or PipelineRun
+- Access workspace paths and bound status
+- Retrieve exit codes from previous Steps
+
+<Warning>
+Tekton does not escape the contents of variables. Task authors are responsible for properly escaping a variable's value according to the shell, image, or scripting language being used.
+</Warning>
+
+## Basic Variable Syntax
+
+Variables use the syntax `$(variable.name)` and can be referenced in most fields of a Task or Pipeline.
+
+### Parameter Variables
+
+Access parameter values using:
+
+```yaml
+params.param-name
+params['param-name']
+params["param-name"]
+```
+
+Example:
+
+```yaml
+apiVersion: tekton.dev/v1
+kind: Task
+metadata:
+  name: hello-world
+spec:
+  params:
+    - name: username
+      type: string
+  steps:
+    - name: echo
+      image: alpine:3.15
+      script: |
+        echo "Hello $(params.username)"
+```
+
+### Array Parameters
+
+Access entire arrays or individual elements:
+
+```yaml
+# Get the whole array
+$(params.array-param[*])
+
+# Get the i-th element (alpha feature)
+$(params.array-param[0])
+$(params.array-param[1])
+```
+
+<Note>
+Array indexing is an alpha feature. Set `enable-api-fields` to `alpha` to use it.
+</Note>
+
+Example:
+
+```yaml
+apiVersion: tekton.dev/v1
+kind: Task
+metadata:
+  name: echo-array
+spec:
+  params:
+    - name: values
+      type: array
+  steps:
+    - name: echo
+      image: alpine
+      command: ["echo"]
+      args: ["$(params.values[*])"]
+```
+
+### Object Parameters
+
+Access object parameter properties (alpha feature):
+
+```yaml
+# Get the whole object
+$(params.object-param[*])
+
+# Get a specific property
+$(params.object-param.property-name)
+```
+
+## Pipeline Variables
+
+### Task Results
+
+Reference results from previous Tasks:
+
+```yaml
+apiVersion: tekton.dev/v1
+kind: Pipeline
+metadata:
+  name: sum-three-pipeline
+spec:
+  params:
+    - name: first
+    - name: second
+    - name: third
+  tasks:
+    - name: first-add
+      taskRef:
+        name: add-task
+      params:
+        - name: first
+          value: $(params.first)
+        - name: second
+          value: $(params.second)
+    - name: second-add
+      taskRef:
+        name: add-task
+      params:
+        - name: first
+          value: $(tasks.first-add.results.sum)
+        - name: second
+          value: $(params.third)
+```
+
+### Array Results
+
+Access array results:
+
+```yaml
+# Get the entire array
+$(tasks.task-name.results.array-result[*])
+
+# Get a specific element
+$(tasks.task-name.results.array-result[0])
+```
+
+Example:
+
+```yaml
+tasks:
+  - name: task1
+    taskSpec:
+      results:
+        - name: images
+          type: array
+      steps:
+        - name: write-array
+          image: bash
+          script: |
+            echo -n '["image1", "image2", "image3"]' | tee $(results.images.path)
+  - name: task2
+    params:
+      - name: all-images
+        value: "$(tasks.task1.results.images[*])"
+      - name: first-image
+        value: "$(tasks.task1.results.images[0])"
+```
+
+### Object Results
+
+Access object result properties:
+
+```yaml
+$(tasks.task-name.results.object-result.key)
+```
+
+## Context Variables
+
+### Task Context Variables
+
+Access information about the current Task and TaskRun:
+
+```yaml
+apiVersion: tekton.dev/v1
+kind: TaskRun
+metadata:
+  generateName: test-taskrun-
+spec:
+  taskSpec:
+    steps:
+      - name: print-context
+        image: ubuntu
+        script: |
+          echo "Task name: $(context.task.name)"
+          echo "TaskRun name: $(context.taskRun.name)"
+          echo "TaskRun UID: $(context.taskRun.uid)"
+          echo "TaskRun namespace: $(context.taskRun.namespace)"
+          echo "Retry count: $(context.task.retry-count)"
+```
+
+| Variable | Description |
+|----------|-------------|
+| `context.task.name` | The name of this Task |
+| `context.taskRun.name` | The name of the TaskRun |
+| `context.taskRun.namespace` | The namespace of the TaskRun |
+| `context.taskRun.uid` | The UID of the TaskRun |
+| `context.task.retry-count` | The current retry number |
+
+### Pipeline Context Variables
+
+Access information about the current Pipeline and PipelineRun:
+
+```yaml
+apiVersion: tekton.dev/v1
+kind: PipelineRun
+metadata:
+  generateName: test-pipelinerun-
+spec:
+  pipelineSpec:
+    tasks:
+      - name: task1
+        params:
+          - name: pipeline-name
+            value: "$(context.pipeline.name)"
+          - name: pipelineRun-name
+            value: "$(context.pipelineRun.name)"
+          - name: pipelineRun-namespace
+            value: "$(context.pipelineRun.namespace)"
+          - name: pipelineRun-uid
+            value: "$(context.pipelineRun.uid)"
+          - name: pipelineTask-retries
+            value: "$(context.pipelineTask.retries)"
+```
+
+| Variable | Description |
+|----------|-------------|
+| `context.pipeline.name` | The name of this Pipeline |
+| `context.pipelineRun.name` | The name of the PipelineRun |
+| `context.pipelineRun.namespace` | The namespace of the PipelineRun |
+| `context.pipelineRun.uid` | The UID of the PipelineRun |
+| `context.pipelineTask.retries` | The retries of this PipelineTask |
+
+## Workspace Variables
+
+Access workspace information:
+
+```yaml
+apiVersion: tekton.dev/v1
+kind: Task
+metadata:
+  name: workspace-example
+spec:
+  workspaces:
+    - name: source
+      optional: true
+  steps:
+    - name: check-workspace
+      image: alpine
+      script: |
+        echo "Workspace path: $(workspaces.source.path)"
+        echo "Workspace bound: $(workspaces.source.bound)"
+        if [ "$(workspaces.source.bound)" == "true" ]; then
+          echo "Workspace is available"
+        else
+          echo "Workspace not provided"
+        fi
+```
+
+| Variable | Description |
+|----------|-------------|
+| `workspaces.name.path` | The path to the mounted Workspace (empty string if optional and not provided) |
+| `workspaces.name.bound` | Whether a Workspace has been bound ("false" if optional and not provided) |
+| `workspaces.name.claim` | The name of the PersistentVolumeClaim (empty for other volume types) |
+| `workspaces.name.volume` | The name of the volume populating the Workspace |
+
+## Results Variables
+
+### Writing Results
+
+Write results to the path provided by Tekton:
+
+```yaml
+apiVersion: tekton.dev/v1
+kind: Task
+metadata:
+  name: add-task
+spec:
+  params:
+    - name: first
+    - name: second
+  results:
+    - name: sum
+      description: the sum of the operands
+  steps:
+    - name: add
+      image: alpine
+      env:
+        - name: OP1
+          value: $(params.first)
+        - name: OP2
+          value: $(params.second)
+      command: ["/bin/sh", "-c"]
+      args:
+        - echo -n $((${OP1}+${OP2})) | tee $(results.sum.path);
+```
+
+### Result Path Variables
+
+| Variable | Description |
+|----------|-------------|
+| `results.result-name.path` | The path to the file where the Task writes its result |
+| `results['result-name'].path` | Alternative syntax |
+| `results["result-name"].path` | Alternative syntax |
+
+## Step Variables
+
+Access exit codes from previous Steps:
+
+```yaml
+steps:
+  - name: first-step
+    image: alpine
+    script: |
+      echo "Running first step"
+      exit 0
+  - name: check-first-step
+    image: alpine
+    script: |
+      EXIT_CODE=$(cat $(steps.step-first-step.exitCode.path))
+      echo "First step exited with: $EXIT_CODE"
+```
+
+| Variable | Description |
+|----------|-------------|
+| `steps.step-name.exitCode.path` | Path to file containing the Step's exit code |
+| `steps.step-unnamed-0.exitCode.path` | Path for unnamed Steps (using index) |
+
+## Matrix Variables
+
+Access matrix execution information:
+
+```yaml
+# Length of matrix combinations
+$(tasks.task-name.matrix.length)
+
+# Length of matrixed Task results
+$(tasks.task-name.matrix.result-name.length)
+```
+
+## Finally Task Variables
+
+In `finally` tasks, access execution status:
+
+```yaml
+finally:
+  - name: cleanup
+    params:
+      - name: task-status
+        value: $(tasks.build-task.status)
+      - name: task-reason
+        value: $(tasks.build-task.reason)
+      - name: aggregate-status
+        value: $(tasks.status)
+```
+
+| Variable | Description |
+|----------|-------------|
+| `tasks.task-name.status` | Execution status: `Succeeded`, `Failed`, or `None` |
+| `tasks.task-name.reason` | Execution reason: `Failed`, `TaskRunCancelled`, `TaskRunTimeout`, etc. |
+| `tasks.status` | Aggregate status of all tasks (excluding finally tasks) |
+
+## Fields Supporting Variable Substitution
+
+Not all fields support variable substitution. Key supported fields include:
+
+### Task Fields
+
+- `spec.steps[].name`
+- `spec.steps[].image`
+- `spec.steps[].command`
+- `spec.steps[].args`
+- `spec.steps[].script`
+- `spec.steps[].env.value`
+- `spec.volumes[].name`
+- `spec.sidecars[].name`
+- `spec.sidecars[].image`
+
+### Pipeline Fields
+
+- `spec.tasks[].params[].value`
+- `spec.tasks[].workspaces[].subPath`
+- `spec.tasks[].when[].input`
+- `spec.tasks[].when[].values`
+- `spec.finally[].params[].value`
+
+## Practical Examples
+
+### Using Parameters in Scripts
+
+```yaml
+steps:
+  - name: build
+    image: golang
+    script: |
+      #!/bin/bash
+      export VERSION=$(params.version)
+      export BUILD_DATE=$(date -u +"%Y-%m-%dT%H:%M:%SZ")
+      go build -ldflags "-X main.version=${VERSION} -X main.buildDate=${BUILD_DATE}"
+```
+
+### Chaining Task Results
+
+```yaml
+tasks:
+  - name: build
+    taskRef:
+      name: build-image
+  - name: scan
+    params:
+      - name: image
+        value: $(tasks.build.results.image-url)
+      - name: digest
+        value: $(tasks.build.results.image-digest)
+    taskRef:
+      name: scan-image
+```
+
+### Conditional Workspace Usage
+
+```yaml
+steps:
+  - name: process
+    image: node:lts-alpine
+    script: |
+      if [ "$(workspaces.cache.bound)" == "true" ]; then
+        echo "Using cache from $(workspaces.cache.path)"
+        cp -r $(workspaces.cache.path)/node_modules .
+      else
+        echo "No cache available, installing fresh"
+      fi
+      npm install
+```
+
+<Tip>
+Use variable substitution to make your Tasks and Pipelines reusable across different environments and use cases.
+</Tip>

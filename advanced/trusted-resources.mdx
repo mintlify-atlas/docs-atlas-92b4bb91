@@ -1,0 +1,382 @@
+---
+title: Trusted Resources
+description: Sign and verify Tekton resources to ensure integrity and authenticity
+---
+
+Trusted Resources is a feature that enables signing Tekton resources and verifying their authenticity before execution. This helps ensure that only trusted Tasks and Pipelines run in your cluster.
+
+<Note>
+This is an alpha feature supporting `v1beta1` and `v1` versions of Task and Pipeline.
+</Note>
+
+## Overview
+
+Trusted Resources provides cryptographic verification of Tekton resources using digital signatures. Key capabilities:
+
+- Sign Tasks and Pipelines with private keys
+- Verify signatures before execution using public keys
+- Support multiple verification policies
+- Enforce or warn on verification failures
+- Automatic verification for remote resources (Git, OCI, Artifact Hub)
+
+<Warning>
+Currently, Trusted Resources only supports verifying resources from remote sources (Git, OCI registry, Artifact Hub). For cluster resolver with in-cluster resources, ensure all default values are set before applying to the cluster, as the mutating webhook may update default fields and fail verification.
+</Warning>
+
+Verification failure marks the corresponding TaskRun/PipelineRun as Failed and stops execution.
+
+## Signing Resources
+
+Use the Tekton CLI to sign Tasks and Pipelines:
+
+```bash
+tkn task sign task.yaml -K cosign.key -f signed-task.yaml
+```
+
+For detailed signing instructions, refer to the [Tekton CLI documentation](https://github.com/tektoncd/cli/blob/main/docs/cmd/tkn_task_sign.md).
+
+### Signed Task Example
+
+```yaml
+apiVersion: tekton.dev/v1beta1
+kind: Task
+metadata:
+  annotations:
+    tekton.dev/signature: MEYCIQDM8WHQAn/yKJ6psTsa0BMjbI9IdguR+Zi6sPTVynxv6wIhAMy8JSETHP7A2Ncw7MyA7qp9eLsu/1cCKOjRL1mFXIKV
+  creationTimestamp: null
+  name: example-task
+  namespace: tekton-trusted-resources
+spec:
+  steps:
+  - image: ubuntu
+    name: echo
+```
+
+The signature is stored in the `tekton.dev/signature` annotation.
+
+## Enabling Trusted Resources
+
+### Configure Feature Flag
+
+Update the `feature-flags` ConfigMap to enable verification:
+
+```yaml
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: feature-flags
+  namespace: tekton-pipelines
+  labels:
+    app.kubernetes.io/instance: default
+    app.kubernetes.io/part-of: tekton-pipelines
+data:
+  trusted-resources-verification-no-match-policy: "fail"
+```
+
+Or patch the ConfigMap:
+
+```bash
+kubectl patch configmap feature-flags -n tekton-pipelines \
+  -p='{"data":{"trusted-resources-verification-no-match-policy":"fail"}}'
+```
+
+### No-Match Policy Options
+
+| Policy | Behavior |
+|--------|----------|
+| `ignore` | Skip verification if no policies match, don't log, don't fail |
+| `warn` | Skip verification if no policies match, log warning, don't fail |
+| `fail` | Fail TaskRun/PipelineRun if no policies match |
+
+<Tabs>
+  <Tab title="Skip Verification">
+
+To skip verification, set `trusted-resources-verification-no-match-policy` to `warn` or `ignore` and ensure no VerificationPolicies exist in the cluster.
+
+  </Tab>
+  <Tab title="Enable Verification">
+
+To enable verification, install VerificationPolicy resources that match your resources and set `trusted-resources-verification-no-match-policy` to `fail` or `warn`.
+
+  </Tab>
+</Tabs>
+
+## Verification Policy
+
+Define verification policies using the `VerificationPolicy` resource.
+
+### How Policies Work
+
+1. Trusted Resources looks up policies from the resource namespace (typically the TaskRun/PipelineRun namespace)
+2. For each policy, checks if the resource URL matches any `patterns` in the `resources` list
+3. If multiple policies match, the resource must pass ALL "enforce" mode policies
+4. Resources that only match "warn" mode policies will log warnings but not fail
+5. To pass a policy, the resource must verify against ANY public key in that policy
+
+### Basic Example
+
+```yaml
+apiVersion: tekton.dev/v1alpha1
+kind: VerificationPolicy
+metadata:
+  name: verification-policy-a
+  namespace: resource-namespace
+spec:
+  resources:
+    - pattern: "https://github.com/tektoncd/catalog.git"
+    - pattern: "gcr.io/tekton-releases/catalog/upstream/git-clone"
+    - pattern: "https://artifacthub.io/"
+  authorities:
+    - name: key1
+      key:
+        secretRef:
+          name: secret-name-a
+          namespace: secret-namespace
+        hashAlgorithm: sha256
+    - name: key2
+      key:
+        data: "STRING_ENCODED_PUBLIC_KEY"
+  mode: enforce
+```
+
+### Policy Fields
+
+**resources**
+- `pattern` - Regex pattern to match resource URLs (e.g., `https://github.com/tektoncd/catalog.git`)
+- Uses Go regex [`Match`](https://pkg.go.dev/regexp#Match) function
+- `.*` matches all resources
+
+**authorities**
+- `name` - Identifier for the authority
+- `key` - Public key configuration (choose ONE):
+  - `secretRef` - Reference to a Secret containing the public key
+  - `data` - Inline PEM-encoded public key
+  - `kms` - URI of the public key (follows [Sigstore format](https://docs.sigstore.dev/cosign/kms_support))
+- `hashAlgorithm` - Hash algorithm (default: `sha256`, also supports `SHA224`, `SHA384`, `SHA512`)
+
+**mode**
+- `enforce` (default) - Fail TaskRun/PipelineRun on verification failure
+- `warn` - Log warning on verification failure, don't fail
+
+### Multiple Policies Example
+
+```yaml
+apiVersion: tekton.dev/v1alpha1
+kind: VerificationPolicy
+metadata:
+  name: verification-policy-a
+  namespace: resource-namespace
+spec:
+  resources:
+    - pattern: "https://github.com/tektoncd/catalog.git"
+  authorities:
+    - name: key1
+      key:
+        secretRef:
+          name: secret-name-a
+          namespace: secret-namespace
+        hashAlgorithm: sha256
+    - name: key2
+      key:
+        data: "STRING_ENCODED_PUBLIC_KEY"
+  mode: enforce
+---
+apiVersion: tekton.dev/v1alpha1
+kind: VerificationPolicy
+metadata:
+  name: verification-policy-b
+  namespace: resource-namespace
+spec:
+  resources:
+    - pattern: "https://github.com/tektoncd/catalog.git"
+  authorities:
+    - name: key3
+      key:
+        data: "STRING_ENCODED_PUBLIC_KEY"
+```
+
+A resource from `https://github.com/tektoncd/catalog.git` must:
+- Pass `verification-policy-a` (using either `key1` OR `key2`)
+- AND pass `verification-policy-b` (using `key3`)
+
+## Status Reporting
+
+Trusted Resources updates the TaskRun/PipelineRun conditions to indicate verification status.
+
+### No Matching Policies
+
+| No-Match Policy | `TrustedResourcesVerified` | `Succeeded` |
+|-----------------|---------------------------|-------------|
+| `ignore` | (not set) | (not set) |
+| `warn` | False | (not set) |
+| `fail` | False | False |
+
+### Matching Policies
+
+| Scenario | `TrustedResourcesVerified` | `Succeeded` |
+|----------|---------------------------|-------------|
+| All policies pass | True | (not set) |
+| Any enforce policy fails | False | False |
+| Only warn policies fail | False | (not set) |
+
+### Success Example
+
+```yaml
+status:
+  conditions:
+  - lastTransitionTime: "2023-03-01T18:17:05Z"
+    message: Trusted resource verification passed
+    status: "True"
+    type: TrustedResourcesVerified
+```
+
+### Failure Example
+
+```yaml
+status:
+  conditions:
+  - lastTransitionTime: "2023-03-01T18:17:05Z"
+    message: resource verification failed
+    status: "False"
+    type: TrustedResourcesVerified
+  - lastTransitionTime: "2023-03-01T18:17:10Z"
+    message: resource verification failed
+    status: "False"
+    type: Succeeded
+```
+
+## Storing Public Keys
+
+<Tabs>
+  <Tab title="Using Secrets">
+
+Store public keys in Kubernetes Secrets:
+
+```yaml
+apiVersion: v1
+kind: Secret
+metadata:
+  name: cosign-public-key
+  namespace: tekton-pipelines
+type: Opaque
+data:
+  cosign.pub: LS0tLS1CRUdJTi...
+```
+
+Reference in VerificationPolicy:
+
+```yaml
+apiVersion: tekton.dev/v1alpha1
+kind: VerificationPolicy
+metadata:
+  name: verification-policy
+  namespace: resource-namespace
+spec:
+  resources:
+    - pattern: "https://github.com/tektoncd/catalog.git"
+  authorities:
+    - name: key1
+      key:
+        secretRef:
+          name: cosign-public-key
+          namespace: tekton-pipelines
+```
+
+  </Tab>
+  <Tab title="Inline Data">
+
+Embed the public key directly:
+
+```yaml
+apiVersion: tekton.dev/v1alpha1
+kind: VerificationPolicy
+metadata:
+  name: verification-policy
+  namespace: resource-namespace
+spec:
+  resources:
+    - pattern: "https://github.com/tektoncd/catalog.git"
+  authorities:
+    - name: inline-key
+      key:
+        data: |
+          -----BEGIN PUBLIC KEY-----
+          MFkwEwYHKoZIzj0CAQYIKoZIzj0DAQcDQgAE...
+          -----END PUBLIC KEY-----
+```
+
+  </Tab>
+  <Tab title="Using KMS">
+
+Reference keys from KMS providers:
+
+```yaml
+apiVersion: tekton.dev/v1alpha1
+kind: VerificationPolicy
+metadata:
+  name: verification-policy
+  namespace: resource-namespace
+spec:
+  resources:
+    - pattern: "https://github.com/tektoncd/catalog.git"
+  authorities:
+    - name: kms-key
+      key:
+        kms: "gcpkms://projects/PROJECT_ID/locations/LOCATION/keyRings/KEYRING/cryptoKeys/KEY/cryptoKeyVersions/VERSION"
+```
+
+  </Tab>
+</Tabs>
+
+## Migration from ConfigMap
+
+<Warning>
+Key configuration in ConfigMap is deprecated. Migrate to VerificationPolicy.
+</Warning>
+
+### Old ConfigMap Approach (Deprecated)
+
+```yaml
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: config-trusted-resources
+  namespace: tekton-pipelines
+data:
+  publickeys: "/etc/verification-secrets/cosign.pub, /etc/verification-secrets/cosign2.pub"
+```
+
+### New VerificationPolicy Approach
+
+Store public key files in Secrets and reference them:
+
+```yaml
+apiVersion: tekton.dev/v1alpha1
+kind: VerificationPolicy
+metadata:
+  name: verification-policy-name
+  namespace: resource-namespace
+spec:
+  authorities:
+    - name: key1
+      key:
+        secretRef:
+          name: secret-name-cosign
+          namespace: secret-namespace
+        hashAlgorithm: sha256
+    - name: key2
+      key:
+        secretRef:
+          name: secret-name-cosign2
+          namespace: secret-namespace
+        hashAlgorithm: sha256
+```
+
+## Best Practices
+
+1. **Use enforce mode for production** - Set `mode: enforce` on policies protecting production resources
+2. **Test with warn mode** - Use `mode: warn` when rolling out new policies
+3. **Scope patterns carefully** - Use specific patterns rather than `.*` to limit policy scope
+4. **Multiple keys per policy** - Add multiple authorities to allow key rotation
+5. **Namespace isolation** - Create policies in the same namespace as resources
+6. **Monitor verification status** - Check `TrustedResourcesVerified` conditions in CI/CD dashboards

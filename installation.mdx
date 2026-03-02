@@ -1,0 +1,165 @@
+---
+title: Installation
+description: Install Tekton Pipelines on your Kubernetes cluster
+---
+
+## Prerequisites
+
+Before installing Tekton Pipelines, ensure you have:
+
+<Steps>
+  <Step title="Kubernetes Cluster">
+    A Kubernetes cluster running version **1.28 or later**
+  </Step>
+  <Step title="kubectl CLI">
+    The [kubectl](https://kubernetes.io/docs/tasks/tools/) command-line tool installed and configured
+  </Step>
+  <Step title="Cluster Admin Privileges">
+    Grant `cluster-admin` privileges to your current user. See the [Kubernetes RBAC documentation](https://kubernetes.io/docs/reference/access-authn-authz/rbac/) for details
+  </Step>
+  <Step title="Metrics Server (Optional)">
+    Install a [Metrics Server](https://github.com/kubernetes-sigs/metrics-server) if you need support for high availability use cases
+  </Step>
+</Steps>
+
+<Info>
+  If you want to test Tekton on your local machine, check out the [local installation guide](https://tekton.dev/docs/installation/local-installation/) for options like Kind, Minikube, or Docker Desktop.
+</Info>
+
+## Install Tekton Pipelines
+
+### Latest Official Release
+
+To install the latest stable version of Tekton Pipelines:
+
+```bash
+kubectl apply --filename https://storage.googleapis.com/tekton-releases/pipeline/latest/release.yaml
+```
+
+<Warning>
+  These quick start instructions are ideal for getting started with Tekton Pipelines but are **not recommended for production use**. For production deployments, use the [Tekton Operator](https://github.com/tektoncd/operator) to install, upgrade, and manage Tekton projects.
+</Warning>
+
+### Alternative Installation Options
+
+<Tabs>
+  <Tab title="Nightly Release">
+    Install the latest nightly build with cutting-edge features:
+    
+    ```bash
+    kubectl apply --filename https://storage.googleapis.com/tekton-releases-nightly/pipeline/latest/release.yaml
+    ```
+  </Tab>
+  <Tab title="Specific Version">
+    Install a specific version by replacing `<version_number>` with the desired version (e.g., `v0.26.0`):
+    
+    ```bash
+    kubectl apply --filename https://storage.googleapis.com/tekton-releases/pipeline/previous/<version_number>/release.yaml
+    ```
+  </Tab>
+  <Tab title="Untagged Release">
+    If your container runtime doesn't support `image-reference:tag@digest` format:
+    
+    ```bash
+    kubectl apply --filename https://storage.googleapis.com/tekton-releases/pipeline/latest/release.notags.yaml
+    ```
+  </Tab>
+</Tabs>
+
+## Verify Installation
+
+Monitor the installation progress by watching the Tekton Pipelines pods:
+
+```bash
+kubectl get pods --namespace tekton-pipelines --watch
+```
+
+When all components show `1/1` under the `READY` column, the installation is complete:
+
+```
+NAME                                           READY   STATUS    RESTARTS   AGE
+tekton-pipelines-controller-68b8d87687-6x7k8   1/1     Running   0          2m
+tekton-pipelines-webhook-69f6d8b4c-5m89j       1/1     Running   0          2m
+```
+
+Press **Ctrl + C** to stop monitoring.
+
+<Note>
+  The `tekton-pipelines` namespace is automatically created during installation and contains all Tekton components.
+</Note>
+
+## Verify Installation with a Test Task
+
+Create a simple test to confirm Tekton is working:
+
+```bash
+kubectl apply -f - <<EOF
+apiVersion: tekton.dev/v1
+kind: TaskRun
+metadata:
+  generateName: hello-
+spec:
+  taskSpec:
+    steps:
+      - name: echo
+        image: ubuntu
+        script: |
+          #!/usr/bin/env bash
+          echo "Hello from Tekton!"
+EOF
+```
+
+Check the TaskRun status:
+
+```bash
+kubectl get taskrun
+```
+
+You should see output similar to:
+
+```
+NAME          SUCCEEDED   REASON      STARTTIME   COMPLETIONTIME
+hello-abc123  True        Succeeded   30s         25s
+```
+
+## Additional Configuration
+
+Tekton Pipelines supports extensive configuration options:
+
+<CardGroup cols={2}>
+  <Card title="Alpha & Beta Features" icon="flask">
+    Enable experimental features for early access to new capabilities
+  </Card>
+  <Card title="Execution Parameters" icon="sliders">
+    Customize timeouts, resource limits, and execution behavior
+  </Card>
+  <Card title="High Availability" icon="server">
+    Configure controller replicas and metrics for production deployments
+  </Card>
+  <Card title="Multi-Tenancy" icon="users">
+    Isolate pipelines across teams and projects (partial support)
+  </Card>
+</CardGroup>
+
+<Info>
+  See the [additional configuration options](https://tekton.dev/docs/pipelines/additional-configs/) documentation for detailed configuration guidance.
+</Info>
+
+## Multi-Tenant Considerations
+
+<Warning>
+  Multi-tenant installation is only **partially supported** today. Review the [multi-tenant support guide](https://github.com/tektoncd/pipeline/blob/main/docs/developers/multi-tenant-support.md) for current limitations and best practices.
+</Warning>
+
+## Next Steps
+
+Now that Tekton Pipelines is installed, you're ready to start building:
+
+<CardGroup cols={2}>
+  <Card title="Quick Start Tutorial" icon="rocket" href="/quickstart">
+    Create your first Task and Pipeline in minutes
+  </Card>
+  <Card title="Explore Examples" icon="code" href="https://github.com/tektoncd/pipeline/tree/main/examples">
+    Browse real-world examples and patterns
+  </Card>
+</CardGroup>

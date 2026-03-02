@@ -1,0 +1,79 @@
+---
+title: API Overview
+description: Tekton Pipelines API reference documentation
+---
+
+## Introduction
+
+Tekton Pipelines provides a Kubernetes-style API for declaring CI/CD pipelines. This API reference documents the structure and fields of all Tekton resources.
+
+## API Versions
+
+### v1 (Stable)
+
+The following resources are stable and production-ready:
+
+- [Task](/api/v1/task) - A collection of steps that execute sequentially
+- [TaskRun](/api/v1/taskrun) - An instantiation of a Task execution
+- [Pipeline](/api/v1/pipeline) - A collection of Tasks arranged in a specific order
+- [PipelineRun](/api/v1/pipelinerun) - An instantiation of a Pipeline execution
+- [StepAction](/api/v1/stepaction) - Reusable step components (v1beta1)
+
+### Beta Resources
+
+The following resources are in beta:
+
+- [CustomRun](/api/beta/customrun) - Execution of custom tasks
+- [ResolutionRequest](/api/beta/resolutionrequest) - Request for remote resource resolution
+- [VerificationPolicy](/api/beta/verificationpolicy) - Policy for verifying resource signatures
+
+## Common Types
+
+Tekton uses several common types across resources:
+
+- [Parameters](/api/types/params) - Input parameters for Tasks and Pipelines
+- [Results](/api/types/results) - Output values from Tasks and Pipelines
+- [Workspaces](/api/types/workspaces) - Shared filesystem volumes
+- [When Expressions](/api/types/when-expressions) - Conditional execution guards
+
+## API Conventions
+
+Tekton follows Kubernetes API conventions:
+
+- All resources have `apiVersion`, `kind`, and `metadata` fields
+- Resources use `spec` for desired state and `status` for observed state
+- Field names use camelCase
+- Duration fields accept Go duration strings (e.g., "1h30m")
+
+## Variable Substitution
+
+Tekton supports variable substitution using the `$(variable)` syntax:
+
+- Parameters: `$(params.name)`
+- Results: `$(tasks.taskName.results.resultName)`
+- Workspaces: `$(workspaces.name.path)`
+- Context variables: `$(context.pipelineRun.name)`
+
+## Resource References
+
+Tasks and Pipelines can be referenced in two ways:
+
+1. **Direct reference** - Using `name` to reference a resource in the same namespace
+2. **Remote resolution** - Using `resolver` and `params` to fetch resources from remote locations
+
+## Status and Conditions
+
+All runtime resources (TaskRun, PipelineRun, CustomRun) use Kubernetes Conditions to report status:
+
+- `type: Succeeded` - Indicates completion status
+- `status: True` - Successful completion
+- `status: False` - Failed completion
+- `status: Unknown` - Still running
+
+## Authentication
+
+Tasks and Pipelines can specify a `serviceAccountName` to control:
+
+- Access to Kubernetes resources
+- Credentials for pulling container images
+- Secrets mounted into execution environments

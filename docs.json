@@ -1,122 +1,186 @@
 {
   "$schema": "https://mintlify.com/docs.json",
-  "theme": "mint",
-  "name": "Mint Starter Kit",
+  "name": "Tekton Pipelines",
+  "theme": "aspen",
   "colors": {
-    "primary": "#16A34A",
-    "light": "#07C983",
-    "dark": "#15803D"
+    "primary": "#0066FF",
+    "light": "#4D94FF",
+    "dark": "#0052CC"
   },
-  "favicon": "/favicon.svg",
+  "navbar": {
+    "primary": {
+      "type": "github",
+      "href": "https://github.com/tektoncd/pipeline"
+    }
+  },
+  "footer": {
+    "socials": {
+      "github": "https://github.com/tektoncd/pipeline"
+    }
+  },
   "navigation": {
     "tabs": [
       {
-        "tab": "Guides",
+        "tab": "Documentation",
         "groups": [
           {
-            "group": "Getting started",
+            "group": "Get Started",
             "pages": [
-              "index",
-              "quickstart",
-              "development"
+              "introduction",
+              "installation",
+              "quickstart"
             ]
           },
           {
-            "group": "Customization",
+            "group": "Core Concepts",
             "pages": [
-              "essentials/settings",
-              "essentials/navigation"
+              "concepts/tasks",
+              "concepts/taskruns",
+              "concepts/pipelines",
+              "concepts/pipelineruns",
+              "concepts/workspaces",
+              "concepts/parameters"
             ]
           },
           {
-            "group": "Writing content",
+            "group": "Guides",
             "pages": [
-              "essentials/markdown",
-              "essentials/code",
-              "essentials/images",
-              "essentials/reusable-snippets"
+              "guides/authentication",
+              "guides/variables",
+              "guides/results",
+              "guides/sidecars",
+              "guides/workspaces-advanced",
+              "guides/remote-resolution",
+              "guides/debugging"
             ]
           },
           {
-            "group": "AI tools",
+            "group": "Advanced Features",
             "pages": [
-              "ai-tools/cursor",
-              "ai-tools/claude-code",
-              "ai-tools/windsurf"
+              "advanced/matrix",
+              "advanced/custom-tasks",
+              "advanced/step-actions",
+              "advanced/pipelines-in-pipelines",
+              "advanced/trusted-resources",
+              "advanced/hermetic-execution"
+            ]
+          },
+          {
+            "group": "Resolvers",
+            "pages": [
+              "resolvers/overview",
+              "resolvers/git-resolver",
+              "resolvers/hub-resolver",
+              "resolvers/bundle-resolver",
+              "resolvers/cluster-resolver",
+              "resolvers/http-resolver",
+              "resolvers/custom-resolver"
+            ]
+          },
+          {
+            "group": "Operations",
+            "pages": [
+              "operations/configuration",
+              "operations/high-availability",
+              "operations/metrics",
+              "operations/events",
+              "operations/performance",
+              "operations/security"
+            ]
+          },
+          {
+            "group": "Migration",
+            "pages": [
+              "migration/v1beta1-to-v1",
+              "migration/v1alpha1-to-v1beta1",
+              "migration/deprecations"
             ]
           }
         ]
       },
       {
-        "tab": "API reference",
+        "tab": "API Reference",
         "groups": [
           {
-            "group": "API documentation",
+            "group": "Overview",
             "pages": [
-              "api-reference/introduction"
+              "api/overview",
+              "api/compatibility-policy"
             ]
           },
           {
-            "group": "Endpoint examples",
+            "group": "v1 Resources",
             "pages": [
-              "api-reference/endpoint/get",
-              "api-reference/endpoint/create",
-              "api-reference/endpoint/delete",
-              "api-reference/endpoint/webhook"
+              "api/v1/task",
+              "api/v1/taskrun",
+              "api/v1/pipeline",
+              "api/v1/pipelinerun",
+              "api/v1/stepaction"
+            ]
+          },
+          {
+            "group": "Beta Resources",
+            "pages": [
+              "api/beta/customrun",
+              "api/beta/resolutionrequest",
+              "api/beta/verificationpolicy"
+            ]
+          },
+          {
+            "group": "Common Types",
+            "pages": [
+              "api/types/params",
+              "api/types/results",
+              "api/types/workspaces",
+              "api/types/when-expressions"
+            ]
+          }
+        ]
+      },
+      {
+        "tab": "Examples",
+        "groups": [
+          {
+            "group": "Task Examples",
+            "pages": [
+              "examples/tasks/basic-task",
+              "examples/tasks/task-with-params",
+              "examples/tasks/task-with-workspaces",
+              "examples/tasks/task-with-results"
+            ]
+          },
+          {
+            "group": "Pipeline Examples",
+            "pages": [
+              "examples/pipelines/simple-pipeline",
+              "examples/pipelines/pipeline-with-params",
+              "examples/pipelines/pipeline-with-results",
+              "examples/pipelines/parallel-tasks"
+            ]
+          },
+          {
+            "group": "Real-World Examples",
+            "pages": [
+              "examples/real-world/build-docker-image",
+              "examples/real-world/git-clone-build",
+              "examples/real-world/multi-stage-pipeline"
+            ]
+          }
+        ]
+      },
+      {
+        "tab": "Contributing",
+        "groups": [
+          {
+            "group": "Development",
+            "pages": [
+              "contributing/overview",
+              "contributing/development-guide",
+              "contributing/architecture"
             ]
           }
         ]
       }
-    ],
-    "global": {
-      "anchors": [
-        {
-          "anchor": "Documentation",
-          "href": "https://mintlify.com/docs",
-          "icon": "book-open-cover"
-        },
-        {
-          "anchor": "Blog",
-          "href": "https://mintlify.com/blog",
-          "icon": "newspaper"
-        }
-      ]
-    }
-  },
-  "logo": {
-    "light": "/logo/light.svg",
-    "dark": "/logo/dark.svg"
-  },
-  "navbar": {
-    "links": [
-      {
-        "label": "Support",
-        "href": "mailto:hi@mintlify.com"
-      }
-    ],
-    "primary": {
-      "type": "button",
-      "label": "Dashboard",
-      "href": "https://dashboard.mintlify.com"
-    }
-  },
-  "contextual": {
-    "options": [
-     "copy",
-     "view",
-     "chatgpt",
-     "claude",
-     "perplexity",
-     "mcp",
-     "cursor",
-     "vscode"
-   ]
-  },
-  "footer": {
-    "socials": {
-      "x": "https://x.com/mintlify",
-      "github": "https://github.com/mintlify",
-      "linkedin": "https://linkedin.com/company/mintlify"
-    }
+    ]
   }
 }

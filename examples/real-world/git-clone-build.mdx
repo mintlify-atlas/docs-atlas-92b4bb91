@@ -1,0 +1,216 @@
+---
+title: "Git Clone and Build"
+description: "Complete CI workflow: clone repository and run tasks"
+---
+
+This example demonstrates a complete CI workflow with git cloning in a pipeline with finally tasks for cleanup.
+
+## Example
+
+This pipeline clones a git repository and uses finally tasks to ensure cleanup happens regardless of success or failure.
+
+```yaml
+apiVersion: tekton.dev/v1
+kind: Pipeline
+metadata:
+  name: clone-cleanup-workspace
+spec:
+  workspaces:
+    # common workspace where git repo is cloned and needs to be cleanup after done
+    - name: git-source
+  tasks:
+    # Clone app repo to workspace
+    - name: clone-app-repo
+      taskRef:
+        name: git-clone-from-catalog
+      params:
+        - name: url
+          value: https://github.com/tektoncd/community.git
+        - name: subdirectory
+          value: application
+      workspaces:
+        - name: output
+          workspace: git-source
+  finally:
+    # Cleanup workspace
+    - name: cleanup
+      taskRef:
+        name: cleanup-workspace
+      workspaces:
+        - name: source
+          workspace: git-source
+    - name: check-git-commit
+      params:
+        - name: commit
+          value: $(tasks.clone-app-repo.results.commit)
+      taskSpec:
+        params:
+          - name: commit
+        steps:
+          - name: check-commit-initialized
+            image: mirror.gcr.io/alpine
+            script: |
+              if [[ ! $(params.commit) ]]; then
+                exit 1
+              fi
+---
+apiVersion: tekton.dev/v1
+kind: PipelineRun
+metadata:
+  name: write-and-cleanup-workspace
+spec:
+  pipelineRef:
+    name: clone-cleanup-workspace
+  taskRunTemplate:
+    serviceAccountName: 'default'
+  workspaces:
+    - name: git-source
+      volumeClaimTemplate:
+        spec:
+          accessModes:
+            - ReadWriteOnce
+          resources:
+            requests:
+              storage: 1Gi
+```
+
+## How It Works
+
+<Steps>
+  <Step title="Clone Git Repository">
+    The `clone-app-repo` task uses a git-clone task to clone the repository into a subdirectory of the shared workspace. It outputs the commit SHA as a result.
+  </Step>
+  
+  <Step title="Regular Tasks Complete">
+    In a real pipeline, you would have additional tasks here (like build, test, etc.) that use the cloned source code.
+  </Step>
+  
+  <Step title="Finally Tasks Execute">
+    The `finally` section contains tasks that run after all regular tasks complete, regardless of success or failure. This ensures cleanup always happens.
+  </Step>
+  
+  <Step title="Cleanup Workspace">
+    The `cleanup` task removes the cloned repository from the workspace. It verifies the directory exists before cleanup and verifies it's gone afterward.
+  </Step>
+  
+  <Step title="Verify Commit Result">
+    The `check-git-commit` task verifies that the clone task properly set the commit result, demonstrating that finally tasks can access results from regular tasks.
+  </Step>
+</Steps>
+
+## Finally Tasks
+
+The `finally` section runs tasks that:
+- Execute after all regular tasks complete
+- Run regardless of whether tasks succeeded or failed
+- Can access results from regular tasks using `$(tasks.NAME.results.RESULT)`
+- Are useful for cleanup, notifications, and status reporting
+
+```yaml
+finally:
+  - name: cleanup
+    taskRef:
+      name: cleanup-workspace
+  - name: notify
+    taskRef:
+      name: send-notification
+```
+
+## Git Clone Task Pattern
+
+The git-clone task follows a common pattern:
+
+**Inputs:**
+- `url`: Repository URL
+- `revision`: Branch, tag, or SHA to checkout (default: main)
+- `subdirectory`: Where to clone within the workspace
+- Various other options (depth, SSL verify, proxies, etc.)
+
+**Outputs:**
+- `commit`: The exact SHA that was cloned
+
+**Workspace:**
+- `output`: Where the repository will be cloned
+
+## Workspace Storage
+
+The PipelineRun uses a `volumeClaimTemplate` to dynamically provision storage:
+
+```yaml
+workspaces:
+  - name: git-source
+    volumeClaimTemplate:
+      spec:
+        accessModes:
+          - ReadWriteOnce
+        resources:
+          requests:
+            storage: 1Gi
+```
+
+This creates a PersistentVolumeClaim that:
+- Exists only for this PipelineRun
+- Is automatically cleaned up when the PipelineRun is deleted
+- Is accessible to all tasks in the pipeline
+
+## Cleanup Task
+
+The cleanup task demonstrates defensive cleanup:
+
+```yaml
+steps:
+  - name: check-application-dir-has-source
+    script: |
+      if [ ! -d "$(workspaces.source.path)/application/" ]; then
+        echo "Could not find application source"
+        exit 1
+      fi
+  - name: cleanup-workspace
+    script: |
+      rm -rf $(workspaces.source.path)/application/
+  - name: verify-application-dir-has-gone
+    script: |
+      if [ -d "$(workspaces.source.path)/application/" ]; then
+        echo "Cleanup failed"
+        exit 1
+      fi
+```
+
+## Expected Output
+
+**Clone task:**
+```
+Cloning into '/workspace/output/application'...
+Successfully cloned https://github.com/tektoncd/community.git
+Commit: abc123def456...
+```
+
+**Cleanup task:**
+```
+Cleaning up /workspace/source/application/
+Cleanup successful
+```
+
+## Key Concepts
+
+- **Finally Tasks**: Tasks that always run at the end of a pipeline
+- **Git Clone**: Common pattern for checking out source code
+- **Workspace Cleanup**: Removing sensitive or large data after pipeline completes
+- **Volume Claim Templates**: Dynamic storage provisioning per PipelineRun
+- **Task Results**: Passing commit SHAs and other metadata between tasks
+- **Defensive Programming**: Verifying state before and after operations
+
+## Real-World Extensions
+
+In production, you might add:
+
+- **Build tasks**: Compile code, run tests
+- **Image building**: Using Kaniko or Buildah
+- **Security scanning**: Scan dependencies and images
+- **Deployment**: Push to registry, deploy to cluster
+- **Notifications**: Send status to Slack, email, etc.
+
+## Next Steps
+
+- See a [complete multi-stage pipeline](/examples/real-world/multi-stage-pipeline)
+- Learn about [building Docker images](/examples/real-world/build-docker-image)

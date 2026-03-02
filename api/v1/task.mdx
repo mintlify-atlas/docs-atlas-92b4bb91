@@ -1,0 +1,177 @@
+---
+title: Task
+description: API reference for the Task v1 resource
+---
+
+A Task is a collection of Steps that execute sequentially. Tasks run as a pod on your Kubernetes cluster with each step running in its own container.
+
+## Resource Definition
+
+<ParamField path="apiVersion" type="string" required>
+  `tekton.dev/v1`
+</ParamField>
+
+<ParamField path="kind" type="string" required>
+  `Task`
+</ParamField>
+
+<ParamField path="metadata" type="ObjectMeta" required>
+  Standard Kubernetes metadata including name, namespace, labels, and annotations.
+</ParamField>
+
+<ParamField path="spec" type="TaskSpec" required>
+  Defines the desired state of the Task.
+</ParamField>
+
+## TaskSpec
+
+<ParamField path="description" type="string">
+  A user-facing description of the task that may be used to populate a UI.
+</ParamField>
+
+<ParamField path="displayName" type="string">
+  A user-facing name of the task that may be used to populate a UI.
+</ParamField>
+
+<ParamField path="params" type="[]ParamSpec">
+  A list of input parameters required to run the task. Params must be supplied in TaskRuns unless they declare a default value.
+
+  See [Parameter Types](/api/types/params) for details.
+</ParamField>
+
+<ParamField path="steps" type="[]Step" required>
+  The steps of the task; each step runs sequentially with the source mounted into /workspace.
+
+  <Expandable title="Step fields">
+    <ParamField path="name" type="string" required>
+      Name of the Step specified as a DNS_LABEL. Each Step must have a unique name.
+    </ParamField>
+
+    <ParamField path="image" type="string">
+      Container image name to run for this Step.
+    </ParamField>
+
+    <ParamField path="command" type="[]string">
+      Entrypoint array. Not executed within a shell. The image's ENTRYPOINT is used if not provided.
+    </ParamField>
+
+    <ParamField path="args" type="[]string">
+      Arguments to the entrypoint. The image's CMD is used if not provided.
+    </ParamField>
+
+    <ParamField path="script" type="string">
+      Script is the contents of an executable file to execute. If Script is not empty, the Step cannot have a Command and the Args will be passed to the Script.
+    </ParamField>
+
+    <ParamField path="workingDir" type="string">
+      Step's working directory. If not specified, the container runtime's default will be used.
+    </ParamField>
+
+    <ParamField path="env" type="[]EnvVar">
+      List of environment variables to set in the Step.
+    </ParamField>
+
+    <ParamField path="computeResources" type="ResourceRequirements">
+      Compute resources required by this Step.
+    </ParamField>
+
+    <ParamField path="volumeMounts" type="[]VolumeMount">
+      Volumes to mount into the Step's filesystem.
+    </ParamField>
+
+    <ParamField path="securityContext" type="SecurityContext">
+      Security options the Step should run with.
+    </ParamField>
+
+    <ParamField path="timeout" type="Duration">
+      Time after which the step times out. Defaults to never.
+    </ParamField>
+
+    <ParamField path="onError" type="string">
+      Exiting behavior on error. Values: `stopAndFail` (default), `continue`
+    </ParamField>
+
+    <ParamField path="results" type="[]StepResult">
+      Results declared by this Step.
+    </ParamField>
+  </Expandable>
+</ParamField>
+
+<ParamField path="volumes" type="[]Volume">
+  A collection of volumes available to mount into the steps of the task.
+</ParamField>
+
+<ParamField path="stepTemplate" type="StepTemplate">
+  Can be used as the basis for all step containers within the Task, so steps inherit settings on the base container.
+</ParamField>
+
+<ParamField path="sidecars" type="[]Sidecar">
+  Containers that run alongside the Task's step containers. They begin before the steps start and end after the steps complete.
+
+  <Expandable title="Sidecar fields">
+    <ParamField path="name" type="string" required>
+      Name of the Sidecar specified as a DNS_LABEL.
+    </ParamField>
+
+    <ParamField path="image" type="string">
+      Container image name.
+    </ParamField>
+
+    <ParamField path="command" type="[]string">
+      Entrypoint array.
+    </ParamField>
+
+    <ParamField path="args" type="[]string">
+      Arguments to the entrypoint.
+    </ParamField>
+
+    <ParamField path="script" type="string">
+      Script to execute. If Script is not empty, the Sidecar cannot have a Command or Args.
+    </ParamField>
+
+    <ParamField path="env" type="[]EnvVar">
+      List of environment variables.
+    </ParamField>
+
+    <ParamField path="securityContext" type="SecurityContext">
+      Security options the Sidecar should run with.
+    </ParamField>
+  </Expandable>
+</ParamField>
+
+<ParamField path="workspaces" type="[]WorkspaceDeclaration">
+  The volumes that this Task requires.
+
+  See [Workspace Types](/api/types/workspaces) for details.
+</ParamField>
+
+<ParamField path="results" type="[]TaskResult">
+  Values that this Task can output.
+
+  See [Result Types](/api/types/results) for details.
+</ParamField>
+
+## Example
+
+```yaml
+apiVersion: tekton.dev/v1
+kind: Task
+metadata:
+  name: example-task
+spec:
+  description: "An example task that echoes a message"
+  params:
+    - name: message
+      type: string
+      description: The message to echo
+      default: "Hello World"
+  steps:
+    - name: echo
+      image: ubuntu
+      script: |
+        #!/usr/bin/env bash
+        echo "$(params.message)"
+  results:
+    - name: message-length
+      description: The length of the message
+```

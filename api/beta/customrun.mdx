@@ -1,0 +1,195 @@
+---
+title: CustomRun
+description: API reference for the CustomRun v1beta1 resource
+---
+
+<Note>
+  CustomRun is at v1beta1 stability level.
+</Note>
+
+A CustomRun represents a single execution of a Custom Task. Custom Tasks extend Tekton's capabilities beyond the built-in Task type.
+
+## Resource Definition
+
+<ParamField path="apiVersion" type="string" required>
+  `tekton.dev/v1beta1`
+</ParamField>
+
+<ParamField path="kind" type="string" required>
+  `CustomRun`
+</ParamField>
+
+<ParamField path="metadata" type="ObjectMeta" required>
+  Standard Kubernetes metadata.
+</ParamField>
+
+<ParamField path="spec" type="CustomRunSpec" required>
+  Defines the desired state of the CustomRun.
+</ParamField>
+
+<ParamField path="status" type="CustomRunStatus">
+  Defines the observed state of the CustomRun.
+</ParamField>
+
+## CustomRunSpec
+
+<ParamField path="customRef" type="TaskRef">
+  Reference to the Custom Task definition. Mutually exclusive with `customSpec`.
+
+  <Expandable title="TaskRef fields">
+    <ParamField path="apiVersion" type="string">
+      API version of the custom task.
+    </ParamField>
+
+    <ParamField path="kind" type="string">
+      Kind of the custom task.
+    </ParamField>
+
+    <ParamField path="name" type="string">
+      Name of the custom task.
+    </ParamField>
+  </Expandable>
+</ParamField>
+
+<ParamField path="customSpec" type="EmbeddedCustomRunSpec">
+  Inline Custom Task specification. Mutually exclusive with `customRef`.
+
+  <Expandable title="EmbeddedCustomRunSpec fields">
+    <ParamField path="apiVersion" type="string">
+      API version of the custom task.
+    </ParamField>
+
+    <ParamField path="kind" type="string">
+      Kind of the custom task.
+    </ParamField>
+
+    <ParamField path="metadata" type="PipelineTaskMetadata">
+      Metadata for the custom task.
+    </ParamField>
+
+    <ParamField path="spec" type="RawExtension">
+      Specification of the custom task (structure varies by custom task type).
+    </ParamField>
+  </Expandable>
+</ParamField>
+
+<ParamField path="params" type="[]Param">
+  Parameters to pass to the Custom Task.
+
+  See [Parameter Types](/api/types/params) for details.
+</ParamField>
+
+<ParamField path="serviceAccountName" type="string">
+  ServiceAccount to use for running the CustomRun.
+</ParamField>
+
+<ParamField path="workspaces" type="[]WorkspaceBinding">
+  Workspace bindings for the CustomRun.
+
+  See [Workspace Types](/api/types/workspaces) for details.
+</ParamField>
+
+<ParamField path="timeout" type="Duration">
+  Time after which the CustomRun times out.
+
+  Format: Go duration string (e.g., "1h30m")
+</ParamField>
+
+<ParamField path="retries" type="integer" default={0}>
+  Number of times to retry on failure.
+</ParamField>
+
+<ParamField path="status" type="string">
+  Used for cancelling a CustomRun.
+
+  Values:
+  - `RunCancelled` - Cancel the CustomRun
+</ParamField>
+
+<ParamField path="statusMessage" type="string">
+  Human-readable status message for cancellation.
+</ParamField>
+
+## CustomRunStatus
+
+<ResponseField name="conditions" type="[]Condition">
+  Conditions describing the current state of the CustomRun.
+
+  <Expandable title="Condition fields">
+    <ResponseField name="type" type="string">
+      Type of condition. Primary type: `Succeeded`
+    </ResponseField>
+
+    <ResponseField name="status" type="string">
+      Status of the condition:
+      - `True` - CustomRun succeeded
+      - `False` - CustomRun failed
+      - `Unknown` - CustomRun is running
+    </ResponseField>
+
+    <ResponseField name="reason" type="string">
+      Machine-readable reason:
+      - `Succeeded`
+      - `Failed`
+      - `Running`
+      - `CustomRunCancelled`
+      - `CustomRunTimedOut`
+    </ResponseField>
+
+    <ResponseField name="message" type="string">
+      Human-readable message.
+    </ResponseField>
+  </Expandable>
+</ResponseField>
+
+<ResponseField name="startTime" type="Time">
+  When the CustomRun started executing.
+</ResponseField>
+
+<ResponseField name="completionTime" type="Time">
+  When the CustomRun completed.
+</ResponseField>
+
+<ResponseField name="results" type="[]CustomRunResult">
+  Results produced by the CustomRun.
+
+  <Expandable title="CustomRunResult fields">
+    <ResponseField name="name" type="string">
+      Name of the result.
+    </ResponseField>
+
+    <ResponseField name="value" type="string">
+      Value of the result.
+    </ResponseField>
+  </Expandable>
+</ResponseField>
+
+<ResponseField name="retriesStatus" type="[]CustomRunStatus">
+  Status of previous retry attempts.
+</ResponseField>
+
+## Custom Task Controllers
+
+CustomRun is designed to be reconciled by custom task controllers. The controller is responsible for:
+
+1. Watching for CustomRuns that match its task type
+2. Executing the custom logic
+3. Updating the CustomRun status with results and conditions
+
+## Example
+
+```yaml
+apiVersion: tekton.dev/v1beta1
+kind: CustomRun
+metadata:
+  name: example-customrun
+spec:
+  customRef:
+    apiVersion: example.dev/v1
+    kind: Example
+    name: my-example-task
+  params:
+    - name: target
+      value: production
+  timeout: 30m
+```

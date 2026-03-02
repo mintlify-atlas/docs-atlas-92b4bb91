@@ -1,0 +1,293 @@
+---
+title: When Expression Types
+description: Reference for Tekton when expressions and conditional execution
+---
+
+When expressions enable conditional execution of PipelineTasks based on runtime values.
+
+## WhenExpression
+
+Defines a condition that must be true for a task to execute.
+
+<ParamField path="input" type="string">
+  The value to evaluate.
+
+  Can be a static string or reference parameters/results:
+  - `$(params.paramName)`
+  - `$(tasks.taskName.results.resultName)`
+  - Static value: `"production"`
+</ParamField>
+
+<ParamField path="operator" type="string" required>
+  The comparison operator.
+
+  Values:
+  - `in` - Input must match one of the values
+  - `notin` - Input must not match any of the values
+</ParamField>
+
+<ParamField path="values" type="[]string" required>
+  Array of values to compare against.
+
+  Must have at least one value.
+
+  ```yaml
+  values: ["main", "develop"]
+  ```
+</ParamField>
+
+<ParamField path="cel" type="string">
+  Common Expression Language (CEL) expression for advanced conditions.
+
+  Alpha feature requiring feature flag.
+
+  Example: `"'$(params.env)' == 'prod' && '$(tasks.test.results.status)' == 'passed'"`
+</ParamField>
+
+## Evaluation
+
+All when expressions on a task must evaluate to `true` for the task to execute:
+
+- **If all expressions are true**: Task executes
+- **If any expression is false**: Task is skipped
+
+## Examples
+
+### Simple String Comparison
+
+```yaml
+tasks:
+  - name: deploy-production
+    when:
+      - input: "$(params.environment)"
+        operator: in
+        values: ["prod", "production"]
+    taskRef:
+      name: deploy
+```
+
+### Check Multiple Conditions
+
+```yaml
+tasks:
+  - name: security-scan
+    when:
+      - input: "$(params.run-security-scan)"
+        operator: in
+        values: ["true"]
+      - input: "$(params.environment)"
+        operator: notin
+        values: ["dev", "test"]
+    taskRef:
+      name: security-scanner
+```
+
+### Based on Previous Task Result
+
+```yaml
+tasks:
+  - name: run-tests
+    taskRef:
+      name: test
+  
+  - name: deploy
+    when:
+      - input: "$(tasks.run-tests.results.status)"
+        operator: in
+        values: ["passed"]
+    taskRef:
+      name: deploy
+    runAfter:
+      - run-tests
+```
+
+### Notin Operator
+
+```yaml
+tasks:
+  - name: skip-in-dev
+    when:
+      - input: "$(params.environment)"
+        operator: notin
+        values: ["dev", "development"]
+    taskRef:
+      name: expensive-task
+```
+
+### Multiple Values
+
+```yaml
+tasks:
+  - name: deploy-to-cloud
+    when:
+      - input: "$(params.platform)"
+        operator: in
+        values: ["aws", "gcp", "azure"]
+    taskRef:
+      name: cloud-deploy
+```
+
+### Using Array Results
+
+```yaml
+tasks:
+  - name: process-files
+    when:
+      - input: "$(tasks.list-files.results.files[0])"
+        operator: notin
+        values: [""]
+    taskRef:
+      name: file-processor
+```
+
+### CEL Expressions (Alpha)
+
+<Warning>
+  CEL expressions are an alpha feature and require the appropriate feature flag.
+</Warning>
+
+```yaml
+tasks:
+  - name: conditional-task
+    when:
+      - cel: "'$(params.branch)' == 'main' && '$(params.commit-count)' > '100'"
+    taskRef:
+      name: special-task
+```
+
+## When Expressions in Finally Tasks
+
+Finally tasks support when expressions to control their execution:
+
+```yaml
+finally:
+  - name: notify-success
+    when:
+      - input: "$(tasks.status)"
+        operator: in
+        values: ["Succeeded"]
+    taskRef:
+      name: send-success-notification
+  
+  - name: notify-failure
+    when:
+      - input: "$(tasks.status)"
+        operator: in
+        values: ["Failed"]
+    taskRef:
+      name: send-failure-notification
+```
+
+## Aggregate Status
+
+Check the overall status of pipeline tasks:
+
+```yaml
+finally:
+  - name: cleanup-on-failure
+    when:
+      - input: "$(tasks.status)"
+        operator: in
+        values: ["Failed"]
+    taskRef:
+      name: cleanup
+```
+
+## Common Patterns
+
+### Deploy Based on Branch
+
+```yaml
+tasks:
+  - name: deploy-staging
+    when:
+      - input: "$(params.git-branch)"
+        operator: in
+        values: ["develop", "staging"]
+    taskRef:
+      name: deploy-staging
+  
+  - name: deploy-production
+    when:
+      - input: "$(params.git-branch)"
+        operator: in
+        values: ["main", "master"]
+    taskRef:
+      name: deploy-production
+```
+
+### Run Tests Conditionally
+
+```yaml
+tasks:
+  - name: unit-tests
+    when:
+      - input: "$(params.skip-tests)"
+        operator: notin
+        values: ["true"]
+    taskRef:
+      name: run-unit-tests
+```
+
+### Feature Flag Gating
+
+```yaml
+tasks:
+  - name: experimental-feature
+    when:
+      - input: "$(params.enable-experimental)"
+        operator: in
+        values: ["true", "yes", "1"]
+    taskRef:
+      name: experimental-task
+```
+
+### Environment-Specific Tasks
+
+```yaml
+tasks:
+  - name: performance-test
+    when:
+      - input: "$(params.environment)"
+        operator: in
+        values: ["staging", "production"]
+      - input: "$(params.run-perf-tests)"
+        operator: in
+        values: ["true"]
+    taskRef:
+      name: perf-test
+```
+
+## Skipped Tasks in Status
+
+When a task is skipped due to when expressions, it appears in the PipelineRun status:
+
+```yaml
+status:
+  skippedTasks:
+    - name: deploy-production
+      reason: "When Expressions evaluated to false"
+      whenExpressions:
+        - input: "develop"
+          operator: in
+          values: ["main"]
+```
+
+## Best Practices
+
+1. **Keep expressions simple** - Complex logic is harder to debug
+2. **Use meaningful parameter names** - Make conditions self-documenting
+3. **Combine with runAfter** - Ensure dependencies are met before checking conditions
+4. **Document conditional logic** - Explain why tasks are conditional
+5. **Test both paths** - Verify tasks execute and skip as expected
+6. **Use notin for exclusions** - More readable than negative checks
+7. **Validate result references** - Ensure referenced tasks produce results
+8. **Consider finally tasks** - For cleanup that should always run
+
+## Limitations
+
+1. All when expressions use AND logic (all must be true)
+2. No built-in OR operator (use multiple tasks or CEL for OR logic)
+3. Cannot reference results from tasks that haven't run
+4. Values must be strings (numeric comparisons require CEL)
+5. No built-in regex matching (use CEL for pattern matching)

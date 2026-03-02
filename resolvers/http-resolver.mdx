@@ -1,0 +1,302 @@
+---
+title: HTTP Resolver
+description: Fetch Tasks and Pipelines from HTTP/HTTPS URLs
+---
+
+The HTTP Resolver fetches Tekton resources from HTTP and HTTPS URLs, enabling simple distribution of Tasks and Pipelines via web servers.
+
+## Resolver Type
+
+This resolver responds to type `http`.
+
+## Parameters
+
+<ParamField path="url" type="string" required>
+  The HTTP or HTTPS URL to fetch the resource from.
+  
+  Example: `https://raw.githubusercontent.com/tektoncd-catalog/git-clone/main/task/git-clone/git-clone.yaml`
+</ParamField>
+
+<ParamField path="http-username" type="string">
+  Optional username for basic authentication. Must be used with `http-password-secret`.
+  
+  Example: `git`
+</ParamField>
+
+<ParamField path="http-password-secret" type="string">
+  Optional secret name containing the password for basic authentication. Must be used with `http-username`.
+  
+  Example: `http-password`
+</ParamField>
+
+<ParamField path="http-password-secret-key" type="string" default="password">
+  Optional key in the password secret to fetch the password from.
+  
+  Default: `password`
+</ParamField>
+
+<ParamField path="digest" type="string">
+  Optional digest to verify the integrity of the fetched content. Format: `<algorithm>:<hash>`
+  
+  Supported algorithms: `sha256`, `sha512`
+  
+  Example: `sha256:f37cdd0e86...`
+</ParamField>
+
+## Requirements
+
+- A cluster running Tekton Pipeline v0.41.0 or later
+- Built-in remote resolvers installed
+- The `enable-http-resolver` feature flag set to `true` in the `resolvers-feature-flags` ConfigMap
+- Beta features enabled
+- Only HTTP and HTTPS URLs are supported
+
+## Configuration
+
+The HTTP Resolver uses the `http-resolver-config` ConfigMap in the `tekton-pipelines-resolvers` namespace.
+
+### Configuration Options
+
+<ParamField path="fetch-timeout" type="string" default="1m">
+  Maximum time for any HTTP fetch operation. Note: A global maximum timeout of 1 minute is enforced on all resolution requests.
+  
+  Example values: `1m`, `2s`, `700ms`
+</ParamField>
+
+```yaml
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: http-resolver-config
+  namespace: tekton-pipelines-resolvers
+data:
+  fetch-timeout: "1m"
+```
+
+## Calculating Digests
+
+To verify resource integrity, calculate the digest of your Tekton resource:
+
+<CodeGroup>
+```bash SHA-256
+curl -sL https://raw.githubusercontent.com/owner/repo/main/task/task.yaml | sha256sum
+```
+
+```bash SHA-512
+curl -sL https://raw.githubusercontent.com/owner/repo/main/task/task.yaml | sha512sum
+```
+</CodeGroup>
+
+<Note>
+`sha256sum` and `sha512sum` are available on all major Linux distributions and macOS.
+</Note>
+
+## Usage Examples
+
+### Task Resolution from Public URL
+
+```yaml
+apiVersion: tekton.dev/v1beta1
+kind: TaskRun
+metadata:
+  name: http-task-public
+spec:
+  taskRef:
+    resolver: http
+    params:
+    - name: url
+      value: https://raw.githubusercontent.com/tektoncd-catalog/git-clone/main/task/git-clone/git-clone.yaml
+```
+
+### Task Resolution with Basic Authentication
+
+```yaml
+apiVersion: tekton.dev/v1beta1
+kind: TaskRun
+metadata:
+  name: http-task-auth
+spec:
+  taskRef:
+    resolver: http
+    params:
+    - name: url
+      value: https://raw.githubusercontent.com/owner/private-repo/main/task/task.yaml
+    - name: http-username
+      value: git
+    - name: http-password-secret
+      value: git-secret
+    - name: http-password-secret-key
+      value: git-token
+```
+
+### Task Resolution with Digest Verification
+
+```yaml
+apiVersion: tekton.dev/v1beta1
+kind: TaskRun
+metadata:
+  name: http-task-digest
+spec:
+  taskRef:
+    resolver: http
+    params:
+    - name: url
+      value: https://raw.githubusercontent.com/tektoncd-catalog/git-clone/main/task/git-clone/git-clone.yaml
+    - name: digest
+      value: sha256:f37cdd0e86b0c10f0f4e6c8e2a8e4c7d3b9f5e8a7c6d5e4f3a2b1c0d9e8f7a6b
+```
+
+### Pipeline Resolution from Public URL
+
+```yaml
+apiVersion: tekton.dev/v1beta1
+kind: PipelineRun
+metadata:
+  name: http-pipeline-public
+spec:
+  pipelineRef:
+    resolver: http
+    params:
+    - name: url
+      value: https://raw.githubusercontent.com/tektoncd/catalog/main/pipeline/build-push-gke-deploy/0.1/build-push-gke-deploy.yaml
+```
+
+### Pipeline Resolution with Digest Verification
+
+```yaml
+apiVersion: tekton.dev/v1beta1
+kind: PipelineRun
+metadata:
+  name: http-pipeline-digest
+spec:
+  pipelineRef:
+    resolver: http
+    params:
+    - name: url
+      value: https://raw.githubusercontent.com/tektoncd/catalog/main/pipeline/build-push-gke-deploy/0.1/build-push-gke-deploy.yaml
+    - name: digest
+      value: sha256:e1a86b942e85ce5558fc737a3b4a82d7425ca392741d20afa3b7fb426e96c66b
+```
+
+## Creating Authentication Secrets
+
+For resources requiring authentication, create a Kubernetes secret:
+
+```bash
+kubectl create secret generic git-secret \
+  --from-literal=git-token=ghp_your_github_token_here
+```
+
+Or using YAML:
+
+```yaml
+apiVersion: v1
+kind: Secret
+metadata:
+  name: git-secret
+type: Opaque
+stringData:
+  git-token: ghp_your_github_token_here
+```
+
+## Security Best Practices
+
+<CardGroup cols={2}>
+  <Card title="Use HTTPS" icon="lock">
+    Always use HTTPS URLs to ensure encrypted transmission
+  </Card>
+  <Card title="Verify Digests" icon="shield-check">
+    Use digest verification for production resources
+  </Card>
+  <Card title="Secure Credentials" icon="key">
+    Store authentication credentials in Kubernetes secrets
+  </Card>
+  <Card title="Validate Sources" icon="magnifying-glass">
+    Only fetch resources from trusted sources
+  </Card>
+</CardGroup>
+
+## Supported URL Schemes
+
+| Scheme | Supported | Notes |
+|--------|-----------|-------|
+| `https://` | Yes | Recommended for production |
+| `http://` | Yes | Use only for development/testing |
+| `file://` | No | Not supported |
+| `ftp://` | No | Not supported |
+
+## Use Cases
+
+<CardGroup cols={2}>
+  <Card title="GitHub Raw Files" icon="github">
+    Fetch resources directly from GitHub repositories
+  </Card>
+  <Card title="Internal Servers" icon="server">
+    Host resources on internal web servers
+  </Card>
+  <Card title="CDN Distribution" icon="cloud">
+    Distribute resources via content delivery networks
+  </Card>
+  <Card title="Simple Sharing" icon="share">
+    Share resources via simple HTTP hosting
+  </Card>
+</CardGroup>
+
+## Comparison with Other Resolvers
+
+| Feature | HTTP Resolver | Git Resolver | Bundle Resolver |
+|---------|---------------|--------------|------------------|
+| Version Control | No | Yes | Yes |
+| Authentication | Basic Auth | Token/SSH | Registry credentials |
+| Digest Verification | Optional | Automatic | Automatic |
+| Caching | No | Yes | Yes |
+| Complexity | Low | Medium | Medium |
+
+## Limitations
+
+<Warning>
+The HTTP Resolver does not support caching. Each resolution fetches the resource from the URL, which may impact performance for frequently used resources.
+</Warning>
+
+- No automatic digest calculation (must be provided manually)
+- No built-in caching mechanism
+- Subject to network availability and latency
+- Basic authentication only (no OAuth or advanced auth)
+- 1-minute global timeout for all resolution requests
+
+## Example: GitHub Raw URL Format
+
+When fetching from GitHub, use the raw content URL format:
+
+```
+https://raw.githubusercontent.com/OWNER/REPO/BRANCH/PATH/TO/FILE
+```
+
+Example:
+```
+https://raw.githubusercontent.com/tektoncd-catalog/git-clone/main/task/git-clone/git-clone.yaml
+```
+
+<Tip>
+For GitHub repositories, consider using the Git Resolver for better caching and version control features.
+</Tip>
+
+## Troubleshooting
+
+<AccordionGroup>
+  <Accordion title="Resolution timeout">
+    If resolution times out, check the `fetch-timeout` configuration and ensure the URL is accessible from the cluster.
+  </Accordion>
+  
+  <Accordion title="Authentication failed">
+    Verify the secret exists in the correct namespace and contains the expected key. Check that the username and password are correct.
+  </Accordion>
+  
+  <Accordion title="Digest verification failed">
+    Recalculate the digest using `sha256sum` or `sha512sum` and ensure it matches the digest parameter exactly.
+  </Accordion>
+  
+  <Accordion title="Invalid URL">
+    Ensure the URL uses `http://` or `https://` scheme and is properly formatted.
+  </Accordion>
+</AccordionGroup>

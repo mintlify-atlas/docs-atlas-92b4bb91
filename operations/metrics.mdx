@@ -1,0 +1,420 @@
+---
+title: Metrics and Monitoring
+description: Configure and use Tekton Pipelines metrics for observability
+---
+
+Tekton Pipelines exposes metrics for monitoring pipeline execution, controller performance, and resource utilization.
+
+## Metrics Endpoint
+
+Metrics are available at the `tekton-pipelines-controller` service on port `9090`:
+
+```bash
+kubectl port-forward -n tekton-pipelines service/tekton-pipelines-controller 9090
+```
+
+Access metrics at: [http://127.0.0.1:9090/metrics](http://127.0.0.1:9090/metrics)
+
+## Available Metrics
+
+All metrics are experimental and subject to change.
+
+### PipelineRun Metrics
+
+<ParamField path="tekton_pipelines_controller_pipelinerun_duration_seconds" type="Histogram/Gauge">
+  Duration of PipelineRuns in seconds.
+  
+  **Labels:**
+  - `pipeline` - Pipeline name (optional)
+  - `pipelinerun` - PipelineRun name (optional)
+  - `status` - Completion status
+  - `namespace` - PipelineRun namespace
+  - `reason` - Completion reason (optional)
+  
+  **Variants:** `_bucket`, `_sum`, `_count`
+</ParamField>
+
+<ParamField path="tekton_pipelines_controller_pipelinerun_taskrun_duration_seconds" type="Histogram/Gauge">
+  Duration of TaskRuns within PipelineRuns in seconds.
+  
+  **Labels:**
+  - `pipeline` - Pipeline name (optional)
+  - `pipelinerun` - PipelineRun name (optional)
+  - `task` - Task name (optional)
+  - `taskrun` - TaskRun name (optional)
+  - `status` - Completion status
+  - `namespace` - Namespace
+  - `reason` - Completion reason (optional)
+  
+  **Variants:** `_bucket`, `_sum`, `_count`
+</ParamField>
+
+<ParamField path="tekton_pipelines_controller_pipelinerun_total" type="Counter">
+  Total number of PipelineRuns.
+  
+  **Labels:**
+  - `status` - Completion status
+</ParamField>
+
+<ParamField path="tekton_pipelines_controller_running_pipelineruns" type="Gauge">
+  Number of currently running PipelineRuns.
+</ParamField>
+
+### TaskRun Metrics
+
+<ParamField path="tekton_pipelines_controller_taskrun_duration_seconds" type="Histogram/Gauge">
+  Duration of TaskRuns in seconds.
+  
+  **Labels:**
+  - `task` - Task name (optional)
+  - `taskrun` - TaskRun name (optional)
+  - `status` - Completion status
+  - `namespace` - TaskRun namespace
+  - `reason` - Completion reason (optional)
+  
+  **Variants:** `_bucket`, `_sum`, `_count`
+</ParamField>
+
+<ParamField path="tekton_pipelines_controller_taskrun_total" type="Counter">
+  Total number of TaskRuns.
+  
+  **Labels:**
+  - `status` - Completion status
+</ParamField>
+
+<ParamField path="tekton_pipelines_controller_running_taskruns" type="Gauge">
+  Number of currently running TaskRuns.
+</ParamField>
+
+### Throttling Metrics
+
+<ParamField path="tekton_pipelines_controller_running_taskruns_throttled_by_quota" type="Gauge">
+  Number of TaskRuns throttled by resource quota.
+  
+  **Labels:**
+  - `namespace` - TaskRun namespace (optional)
+</ParamField>
+
+<ParamField path="tekton_pipelines_controller_running_taskruns_throttled_by_node" type="Gauge">
+  Number of TaskRuns throttled by node availability.
+  
+  **Labels:**
+  - `namespace` - TaskRun namespace (optional)
+</ParamField>
+
+### Client Metrics
+
+<ParamField path="tekton_pipelines_controller_client_latency" type="Histogram">
+  Kubernetes API client latency in milliseconds.
+  
+  **Variants:** `_bucket`, `_sum`, `_count`
+</ParamField>
+
+## Metrics Configuration
+
+Configure metrics behavior in the `config-observability` ConfigMap:
+
+```yaml
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: config-observability
+  namespace: tekton-pipelines
+data:
+  metrics-protocol: prometheus
+  metrics.taskrun.level: "task"
+  metrics.taskrun.duration-type: "histogram"
+  metrics.pipelinerun.level: "pipeline"
+  metrics.pipelinerun.duration-type: "histogram"
+  metrics.count.enable-reason: "false"
+  metrics.running-pipelinerun.level: ""
+```
+
+### TaskRun Metrics Level
+
+<ParamField path="metrics.taskrun.level" type="string" default="task">
+  Granularity level for TaskRun metrics.
+  
+  - `taskrun` - Include taskrun label (highest cardinality)
+  - `task` - Include task label, exclude taskrun label
+  - `namespace` - Include only namespace label (lowest cardinality)
+  
+  ```yaml
+  data:
+    metrics.taskrun.level: "namespace"
+  ```
+</ParamField>
+
+### TaskRun Duration Type
+
+<ParamField path="metrics.taskrun.duration-type" type="string" default="histogram">
+  Metric type for TaskRun duration.
+  
+  - `histogram` - Histogram with buckets for duration distribution
+  - `lastvalue` - Gauge with last observed duration
+  
+  ```yaml
+  data:
+    metrics.taskrun.duration-type: "lastvalue"
+  ```
+  
+  <Note>Histogram is not available when `taskrun` or `pipelinerun` labels are selected (leads to single bar).</Note>
+</ParamField>
+
+### PipelineRun Metrics Level
+
+<ParamField path="metrics.pipelinerun.level" type="string" default="pipeline">
+  Granularity level for PipelineRun metrics.
+  
+  - `pipelinerun` - Include pipelinerun label (highest cardinality)
+  - `pipeline` - Include pipeline label, exclude pipelinerun label
+  - `namespace` - Include only namespace label (lowest cardinality)
+  
+  ```yaml
+  data:
+    metrics.pipelinerun.level: "namespace"
+  ```
+</ParamField>
+
+### Running PipelineRun Level
+
+<ParamField path="metrics.running-pipelinerun.level" type="string" default="">
+  Granularity level for running PipelineRun count metrics.
+  
+  - `pipelinerun` - Include pipelinerun label
+  - `pipeline` - Include pipeline label
+  - `namespace` - Include namespace label
+  - `""` (empty) - Cluster level, no labels
+  
+  ```yaml
+  data:
+    metrics.running-pipelinerun.level: "namespace"
+  ```
+</ParamField>
+
+### PipelineRun Duration Type
+
+<ParamField path="metrics.pipelinerun.duration-type" type="string" default="histogram">
+  Metric type for PipelineRun duration.
+  
+  - `histogram` - Histogram with buckets
+  - `lastvalue` - Gauge with last value
+  
+  ```yaml
+  data:
+    metrics.pipelinerun.duration-type: "lastvalue"
+  ```
+</ParamField>
+
+### Reason Label
+
+<ParamField path="metrics.count.enable-reason" type="boolean" default="false">
+  Include `reason` label on duration metrics.
+  
+  ```yaml
+  data:
+    metrics.count.enable-reason: "true"
+  ```
+  
+  <Note>Does not affect total counters (`*_total`), which always include reason.</Note>
+</ParamField>
+
+### Throttle Namespace Label
+
+<ParamField path="metrics.taskrun.throttle.enable-namespace" type="boolean" default="false">
+  Include `namespace` label on throttle metrics.
+  
+  ```yaml
+  data:
+    metrics.taskrun.throttle.enable-namespace: "true"
+  ```
+</ParamField>
+
+## OpenTelemetry Configuration
+
+### Metrics Protocol
+
+<ParamField path="metrics-protocol" type="string" default="prometheus">
+  Protocol for metrics export.
+  
+  Options: `prometheus`, `grpc`, `http/protobuf`, `none`
+  
+  ```yaml
+  data:
+    metrics-protocol: "grpc"
+  ```
+</ParamField>
+
+<ParamField path="metrics-endpoint" type="string">
+  Metrics endpoint for gRPC/HTTP protocols.
+  
+  ```yaml
+  data:
+    metrics-endpoint: "otel-collector:4317"
+  ```
+</ParamField>
+
+<ParamField path="metrics-export-interval" type="duration">
+  Metrics export interval.
+  
+  ```yaml
+  data:
+    metrics-export-interval: "30s"
+  ```
+</ParamField>
+
+### Tracing Configuration
+
+<ParamField path="tracing-protocol" type="string" default="none">
+  Protocol for tracing export.
+  
+  Options: `grpc`, `http/protobuf`, `none`, `stdout`
+  
+  ```yaml
+  data:
+    tracing-protocol: "grpc"
+  ```
+</ParamField>
+
+<ParamField path="tracing-endpoint" type="string">
+  Tracing endpoint for gRPC/HTTP protocols.
+  
+  ```yaml
+  data:
+    tracing-endpoint: "otel-collector:4317"
+  ```
+</ParamField>
+
+<ParamField path="tracing-sampling-rate" type="string" default="1.0">
+  Tracing sampling rate (0.0 to 1.0).
+  
+  ```yaml
+  data:
+    tracing-sampling-rate: "0.1"
+  ```
+</ParamField>
+
+### Runtime Profiling
+
+<ParamField path="runtime-profiling" type="string" default="disabled">
+  Enable runtime profiling.
+  
+  Options: `enabled`, `disabled`
+  
+  ```yaml
+  data:
+    runtime-profiling: "enabled"
+  ```
+</ParamField>
+
+<ParamField path="runtime-export-interval" type="duration" default="15s">
+  Runtime metrics export interval.
+  
+  ```yaml
+  data:
+    runtime-export-interval: "30s"
+  ```
+</ParamField>
+
+## Prometheus Integration
+
+### ServiceMonitor
+
+For Prometheus Operator, create a ServiceMonitor:
+
+```yaml
+apiVersion: monitoring.coreos.com/v1
+kind: ServiceMonitor
+metadata:
+  name: tekton-pipelines-controller
+  namespace: tekton-pipelines
+spec:
+  selector:
+    matchLabels:
+      app.kubernetes.io/name: controller
+  endpoints:
+  - port: http-metrics
+    interval: 30s
+```
+
+### Scrape Configuration
+
+For standard Prometheus, add scrape configuration:
+
+```yaml
+scrape_configs:
+  - job_name: 'tekton-pipelines'
+    kubernetes_sd_configs:
+    - role: endpoints
+      namespaces:
+        names:
+        - tekton-pipelines
+    relabel_configs:
+    - source_labels: [__meta_kubernetes_service_name]
+      action: keep
+      regex: tekton-pipelines-controller
+    - source_labels: [__meta_kubernetes_endpoint_port_name]
+      action: keep
+      regex: http-metrics
+```
+
+## Grafana Dashboards
+
+Example Prometheus queries for Grafana:
+
+### PipelineRun Success Rate
+
+```promql
+sum(rate(tekton_pipelines_controller_pipelinerun_total{status="success"}[5m]))
+/
+sum(rate(tekton_pipelines_controller_pipelinerun_total[5m]))
+```
+
+### Average PipelineRun Duration
+
+```promql
+rate(tekton_pipelines_controller_pipelinerun_duration_seconds_sum[5m])
+/
+rate(tekton_pipelines_controller_pipelinerun_duration_seconds_count[5m])
+```
+
+### Running PipelineRuns by Namespace
+
+```promql
+tekton_pipelines_controller_running_pipelineruns{namespace=~".*"}
+```
+
+### TaskRun Throttling
+
+```promql
+sum by (namespace) (tekton_pipelines_controller_running_taskruns_throttled_by_quota)
+```
+
+## Best Practices
+
+1. **Use namespace-level metrics** in production to avoid unbounded cardinality
+2. **Enable reason labels** only when needed for debugging
+3. **Monitor throttling metrics** to identify resource quota issues
+4. **Set appropriate scrape intervals** (30s recommended)
+5. **Use histogram type** for duration metrics when aggregating across multiple resources
+6. **Configure retention policies** in your metrics backend
+7. **Alert on high failure rates** and long-running pipelines
+
+<Warning>
+TaskRun and PipelineRun level metrics are not recommended for production as they lead to unbounded cardinality, which can degrade observability database performance.
+</Warning>
+
+## Verification
+
+Verify metrics configuration is applied:
+
+```bash
+# Port forward to metrics endpoint
+kubectl port-forward -n tekton-pipelines service/tekton-pipelines-controller 9090
+
+# Check metrics are exposed
+curl http://127.0.0.1:9090/metrics | grep tekton_pipelines
+
+# Verify specific metric
+curl http://127.0.0.1:9090/metrics | grep pipelinerun_duration_seconds
+```

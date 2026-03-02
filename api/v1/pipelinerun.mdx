@@ -1,0 +1,259 @@
+---
+title: PipelineRun
+description: API reference for the PipelineRun v1 resource
+---
+
+A PipelineRun represents a single execution of a Pipeline. PipelineRuns instantiate Pipelines and create TaskRuns for each task in the pipeline.
+
+## Resource Definition
+
+<ParamField path="apiVersion" type="string" required>
+  `tekton.dev/v1`
+</ParamField>
+
+<ParamField path="kind" type="string" required>
+  `PipelineRun`
+</ParamField>
+
+<ParamField path="metadata" type="ObjectMeta" required>
+  Standard Kubernetes metadata.
+</ParamField>
+
+<ParamField path="spec" type="PipelineRunSpec" required>
+  Defines the desired state of the PipelineRun.
+</ParamField>
+
+<ParamField path="status" type="PipelineRunStatus">
+  Defines the observed state of the PipelineRun.
+</ParamField>
+
+## PipelineRunSpec
+
+<ParamField path="pipelineRef" type="PipelineRef">
+  Reference to the Pipeline to execute. Mutually exclusive with `pipelineSpec`.
+
+  <Expandable title="PipelineRef fields">
+    <ParamField path="name" type="string">
+      Name of the Pipeline in the same namespace.
+    </ParamField>
+
+    <ParamField path="resolver" type="string">
+      Name of the resolver for remote resolution.
+    </ParamField>
+
+    <ParamField path="params" type="[]Param">
+      Parameters for remote resolution.
+    </ParamField>
+  </Expandable>
+</ParamField>
+
+<ParamField path="pipelineSpec" type="PipelineSpec">
+  Inline Pipeline specification. Mutually exclusive with `pipelineRef`.
+
+  Can be disabled with the `disable-inline-spec` feature flag.
+</ParamField>
+
+<ParamField path="params" type="[]Param">
+  Parameters to pass to the Pipeline.
+
+  See [Parameter Types](/api/types/params) for details.
+</ParamField>
+
+<ParamField path="workspaces" type="[]WorkspaceBinding">
+  Workspace bindings for the Pipeline.
+
+  See [Workspace Types](/api/types/workspaces) for details.
+</ParamField>
+
+<ParamField path="timeouts" type="TimeoutFields">
+  Timeout configuration for the PipelineRun.
+
+  <Expandable title="TimeoutFields">
+    <ParamField path="pipeline" type="Duration">
+      Maximum duration for the entire pipeline. Defaults to 1 hour.
+    </ParamField>
+
+    <ParamField path="tasks" type="Duration">
+      Maximum duration for all tasks (excluding finally tasks).
+    </ParamField>
+
+    <ParamField path="finally" type="Duration">
+      Maximum duration for finally tasks.
+    </ParamField>
+  </Expandable>
+
+  Constraint: `pipeline` ≥ `tasks` + `finally`
+</ParamField>
+
+<ParamField path="status" type="string">
+  Control the execution state of the PipelineRun.
+
+  Values:
+  - `Cancelled` - Cancel immediately
+  - `CancelledRunFinally` - Cancel but run finally tasks
+  - `StoppedRunFinally` - Stop gracefully and run finally tasks
+  - `PipelineRunPending` - Hold execution until set to empty string
+</ParamField>
+
+<ParamField path="taskRunTemplate" type="PipelineTaskRunTemplate">
+  Template configuration applied to all TaskRuns created by this PipelineRun.
+
+  <Expandable title="PipelineTaskRunTemplate fields">
+    <ParamField path="serviceAccountName" type="string">
+      ServiceAccount for all TaskRuns.
+    </ParamField>
+
+    <ParamField path="podTemplate" type="PodTemplate">
+      Pod template for all TaskRuns.
+    </ParamField>
+  </Expandable>
+</ParamField>
+
+<ParamField path="taskRunSpecs" type="[]PipelineTaskRunSpec">
+  Specifications for individual tasks in the pipeline.
+
+  <Expandable title="PipelineTaskRunSpec fields">
+    <ParamField path="pipelineTaskName" type="string" required>
+      Name of the pipeline task to configure.
+    </ParamField>
+
+    <ParamField path="serviceAccountName" type="string">
+      ServiceAccount override for this task.
+    </ParamField>
+
+    <ParamField path="podTemplate" type="PodTemplate">
+      Pod template override for this task.
+    </ParamField>
+
+    <ParamField path="computeResources" type="ResourceRequirements">
+      Compute resource override.
+    </ParamField>
+  </Expandable>
+</ParamField>
+
+## PipelineRunStatus
+
+<ResponseField name="conditions" type="[]Condition">
+  Conditions describing the current state.
+
+  <Expandable title="Condition fields">
+    <ResponseField name="type" type="string">
+      Primary type: `Succeeded`
+    </ResponseField>
+
+    <ResponseField name="status" type="string">
+      `True`, `False`, or `Unknown`
+    </ResponseField>
+
+    <ResponseField name="reason" type="string">
+      Reason codes include:
+      - `Succeeded` - Pipeline completed successfully
+      - `Failed` - Pipeline failed
+      - `Running` - Pipeline is executing
+      - `Cancelled` - Pipeline was cancelled
+      - `PipelineRunTimeout` - Pipeline timed out
+    </ResponseField>
+
+    <ResponseField name="message" type="string">
+      Human-readable message.
+    </ResponseField>
+  </Expandable>
+</ResponseField>
+
+<ResponseField name="startTime" type="Time">
+  When the PipelineRun started.
+</ResponseField>
+
+<ResponseField name="completionTime" type="Time">
+  When the PipelineRun completed.
+</ResponseField>
+
+<ResponseField name="finallyStartTime" type="Time">
+  When finally tasks began executing.
+</ResponseField>
+
+<ResponseField name="pipelineSpec" type="PipelineSpec">
+  The resolved Pipeline specification that was executed.
+</ResponseField>
+
+<ResponseField name="childReferences" type="[]ChildStatusReference">
+  References to TaskRuns and Runs created by this PipelineRun.
+
+  <Expandable title="ChildStatusReference fields">
+    <ResponseField name="name" type="string">
+      Name of the TaskRun or Run.
+    </ResponseField>
+
+    <ResponseField name="pipelineTaskName" type="string">
+      Name of the PipelineTask this references.
+    </ResponseField>
+
+    <ResponseField name="displayName" type="string">
+      User-facing display name.
+    </ResponseField>
+
+    <ResponseField name="whenExpressions" type="[]WhenExpression">
+      When expressions that guarded this task.
+    </ResponseField>
+  </Expandable>
+</ResponseField>
+
+<ResponseField name="results" type="[]PipelineRunResult">
+  Results produced by the Pipeline.
+
+  <Expandable title="PipelineRunResult fields">
+    <ResponseField name="name" type="string">
+      Name of the result as declared by the Pipeline.
+    </ResponseField>
+
+    <ResponseField name="value" type="ResultValue">
+      The actual value produced.
+    </ResponseField>
+  </Expandable>
+</ResponseField>
+
+<ResponseField name="skippedTasks" type="[]SkippedTask">
+  Tasks that were skipped.
+
+  <Expandable title="SkippedTask fields">
+    <ResponseField name="name" type="string">
+      Name of the skipped task.
+    </ResponseField>
+
+    <ResponseField name="reason" type="SkippingReason">
+      Why the task was skipped:
+      - `When Expressions evaluated to false`
+      - `Parent Tasks were skipped`
+      - `PipelineRun was stopping`
+      - `Results were missing`
+    </ResponseField>
+  </Expandable>
+</ResponseField>
+
+## Example
+
+```yaml
+apiVersion: tekton.dev/v1
+kind: PipelineRun
+metadata:
+  name: example-pipelinerun
+spec:
+  pipelineRef:
+    name: example-pipeline
+  params:
+    - name: repo-url
+      value: https://github.com/example/repo
+  workspaces:
+    - name: shared-data
+      volumeClaimTemplate:
+        spec:
+          accessModes:
+            - ReadWriteOnce
+          resources:
+            requests:
+              storage: 1Gi
+  timeouts:
+    pipeline: 1h
+    tasks: 50m
+    finally: 10m
+```

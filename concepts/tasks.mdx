@@ -1,0 +1,477 @@
+---
+title: Tasks
+description: Task resource documentation for Tekton Pipelines
+---
+
+A `Task` is a collection of `Steps` that you define and arrange in a specific order of execution as part of your continuous integration flow. A `Task` executes as a Pod on your Kubernetes cluster.
+
+## Overview
+
+A `Task` is available within a specific namespace, while a cluster resolver can be used to access Tasks across the entire cluster.
+
+<Note>
+The cluster resolver is the recommended way to access Tasks across the cluster. ClusterTasks are deprecated.
+</Note>
+
+A `Task` declaration includes the following elements:
+- [Parameters](#parameters)
+- [Steps](#steps)
+- [Workspaces](#workspaces)
+- [Results](#results)
+
+## Task Configuration
+
+A `Task` definition supports the following fields:
+
+### Required Fields
+
+<ParamField path="apiVersion" type="string" required>
+  Specifies the API version. For example, `tekton.dev/v1` or `tekton.dev/v1beta1`.
+</ParamField>
+
+<ParamField path="kind" type="string" required>
+  Identifies this resource object as a `Task` object.
+</ParamField>
+
+<ParamField path="metadata" type="object" required>
+  Specifies metadata that uniquely identifies the Task resource object. For example, a `name`.
+</ParamField>
+
+<ParamField path="spec" type="object" required>
+  Specifies the configuration information for this Task resource object.
+</ParamField>
+
+<ParamField path="spec.steps" type="array" required>
+  Specifies one or more container images to run in the Task.
+</ParamField>
+
+### Optional Fields
+
+<ParamField path="spec.description" type="string">
+  An informative description of the Task.
+</ParamField>
+
+<ParamField path="spec.params" type="array">
+  Specifies execution parameters for the Task.
+</ParamField>
+
+<ParamField path="spec.workspaces" type="array">
+  Specifies paths to volumes required by the Task.
+</ParamField>
+
+<ParamField path="spec.results" type="array">
+  Specifies the names under which Tasks write execution results.
+</ParamField>
+
+<ParamField path="spec.volumes" type="array">
+  Specifies one or more volumes that will be available to the Steps in the Task.
+</ParamField>
+
+<ParamField path="spec.stepTemplate" type="object">
+  Specifies a Container step definition to use as the basis for all Steps in the Task.
+</ParamField>
+
+<ParamField path="spec.sidecars" type="array">
+  Specifies Sidecar containers to run alongside the Steps in the Task.
+</ParamField>
+
+## Example Task Definition
+
+```yaml
+apiVersion: tekton.dev/v1
+kind: Task
+metadata:
+  name: example-task-name
+spec:
+  params:
+    - name: pathToDockerFile
+      type: string
+      description: The path to the dockerfile to build
+      default: /workspace/workspace/Dockerfile
+    - name: builtImageUrl
+      type: string
+      description: location to push the built image to
+  steps:
+    - name: ubuntu-example
+      image: ubuntu
+      args: ["ubuntu-build-example", "SECRETS-example.md"]
+    - image: gcr.io/example-builders/build-example
+      command: ["echo"]
+      args: ["$(params.pathToDockerFile)"]
+    - name: dockerfile-pushexample
+      image: gcr.io/example-builders/push-example
+      args: ["push", "$(params.builtImageUrl)"]
+      volumeMounts:
+        - name: docker-socket-example
+          mountPath: /var/run/docker.sock
+  volumes:
+    - name: example-volume
+      emptyDir: {}
+```
+
+## Steps
+
+A `Step` is a reference to a container image that executes a specific tool on a specific input and produces a specific output. To add `Steps` to a `Task` you define a `steps` field containing a list of desired `Steps`. The order in which the `Steps` appear in this list is the order in which they will execute.
+
+### Step Requirements
+
+The following requirements apply to each container image referenced in a `steps` field:
+- The container image must abide by the container contract
+- Each container image runs to completion or until the first failure occurs
+- The CPU, memory, and ephemeral storage resource requests set on Steps will be adjusted to comply with any LimitRanges present in the Namespace
+
+### Setting Resource Limits
+
+<Tabs>
+  <Tab title="v1">
+    ```yaml
+    spec:
+      steps:
+        - name: step-with-limits
+          computeResources:
+            requests:
+              memory: 1Gi
+              cpu: 500m
+            limits:
+              memory: 2Gi
+              cpu: 800m
+    ```
+  </Tab>
+  <Tab title="v1beta1">
+    ```yaml
+    spec:
+      steps:
+        - name: step-with-limits
+          resources:
+            requests:
+              memory: 1Gi
+              cpu: 500m
+            limits:
+              memory: 2Gi
+              cpu: 800m
+    ```
+  </Tab>
+</Tabs>
+
+### Running Scripts in Steps
+
+A step can specify a `script` field, which contains the body of a script. That script is invoked as if it were stored inside the container image, and any `args` are passed directly to it.
+
+<Note>
+If the `script` field is present, the step cannot also contain a `command` field.
+</Note>
+
+Scripts that do not start with a shebang line will have the following default preamble prepended:
+
+```bash
+#!/bin/sh
+set -e
+```
+
+#### Bash Script Example
+
+```yaml
+steps:
+  - image: ubuntu
+    script: |
+      #!/usr/bin/env bash
+      echo "Hello from Bash!"
+```
+
+#### Python Script Example
+
+```yaml
+steps:
+  - image: python
+    script: |
+      #!/usr/bin/env python3
+      print("Hello from Python!")
+```
+
+#### Node Script Example
+
+```yaml
+steps:
+  - image: node
+    script: |
+      #!/usr/bin/env node
+      console.log("Hello from Node!")
+```
+
+## Parameters
+
+You can specify parameters that you want to supply to the Task at execution time. Parameters are passed to the Task from its corresponding TaskRun.
+
+### Parameter Name Format
+
+Parameter names:
+- Must only contain alphanumeric characters, hyphens (`-`), underscores (`_`), and dots (`.`)
+- Must begin with a letter or an underscore (`_`)
+- Are **case insensitive**
+
+<Warning>
+Object parameter names and their key names cannot contain dots (`.`).
+</Warning>
+
+### Parameter Types
+
+Each declared parameter has a `type` field, which can be set to `string`, `array`, or `object`.
+
+#### String Type
+
+If not specified, the `type` field defaults to `string`.
+
+```yaml
+spec:
+  params:
+    - name: gitrepo-url
+      type: string
+      description: The git repository URL
+```
+
+#### Array Type
+
+`array` type is useful when the number of compilation flags being supplied to a Task varies throughout execution.
+
+```yaml
+spec:
+  params:
+    - name: flags
+      type: array
+```
+
+#### Object Type
+
+`object` type is useful when you want to group related parameters.
+
+```yaml
+spec:
+  params:
+    - name: gitrepo
+      type: object
+      properties:
+        url:
+          type: string
+        commit:
+          type: string
+```
+
+<Note>
+Object parameters must specify the `properties` section to define the schema.
+</Note>
+
+### Parameter Example
+
+```yaml
+apiVersion: tekton.dev/v1
+kind: Task
+metadata:
+  name: task-with-parameters
+spec:
+  params:
+    - name: gitrepo
+      type: object
+      properties:
+        url:
+          type: string
+        commit:
+          type: string
+    - name: flags
+      type: array
+    - name: someURL
+      type: string
+  steps:
+    - name: do-the-clone
+      image: some-git-image
+      args:
+        - "-url=$(params.gitrepo.url)"
+        - "-revision=$(params.gitrepo.commit)"
+    - name: build
+      image: my-builder
+      args:
+        - "build"
+        - "$(params.flags[*])"
+        - "url=$(params.someURL)"
+```
+
+## Workspaces
+
+Workspaces allow you to specify one or more volumes that each Task requires during execution.
+
+```yaml
+spec:
+  steps:
+    - name: write-message
+      image: ubuntu
+      script: |
+        #!/usr/bin/env bash
+        set -xe
+        echo hello! > $(workspaces.messages.path)/message
+  workspaces:
+    - name: messages
+      description: The folder where we write the message to
+      mountPath: /custom/path/relative/to/root
+```
+
+For more information, see the [Workspaces](/concepts/workspaces) documentation.
+
+## Results
+
+A Task can emit string results that can be viewed by users and passed to other Tasks in a Pipeline. Task results are best suited for holding small amounts of data, such as commit SHAs, branch names, ephemeral namespaces, and so on.
+
+### Defining Results
+
+```yaml
+apiVersion: tekton.dev/v1
+kind: Task
+metadata:
+  name: print-date
+  annotations:
+    description: |
+      A simple task that prints the date
+spec:
+  results:
+    - name: current-date-unix-timestamp
+      description: The current date in unix timestamp format
+    - name: current-date-human-readable
+      description: The current date in human readable format
+  steps:
+    - name: print-date-unix-timestamp
+      image: bash:latest
+      script: |
+        #!/usr/bin/env bash
+        date +%s | tee $(results.current-date-unix-timestamp.path)
+    - name: print-date-human-readable
+      image: bash:latest
+      script: |
+        #!/usr/bin/env bash
+        date | tee $(results.current-date-human-readable.path)
+```
+
+### Array Results
+
+Tasks can also emit array results:
+
+```yaml
+kind: Task
+apiVersion: tekton.dev/v1
+metadata:
+  name: write-array
+spec:
+  results:
+    - name: array-results
+      type: array
+      description: The array results
+  steps:
+    - name: write-array
+      image: bash:latest
+      script: |
+        #!/usr/bin/env bash
+        echo -n '["hello","world"]' | tee $(results.array-results.path)
+```
+
+<Note>
+The opening and closing square brackets are mandatory along with escaped JSON.
+</Note>
+
+### Object Results
+
+Tasks can emit object results:
+
+```yaml
+kind: Task
+apiVersion: tekton.dev/v1
+metadata:
+  name: write-object
+spec:
+  results:
+    - name: object-results
+      type: object
+      description: The object results
+      properties:
+        url:
+          type: string
+        digest:
+          type: string
+  steps:
+    - name: write-object
+      image: bash:latest
+      script: |
+        #!/usr/bin/env bash
+        echo -n '{"url":"abc.dev/sampler","digest":"19f02276bf8dbdd62f069b922f10c65262cc34b710eea26ff928129a736be791"}' | tee $(results.object-results.path)
+```
+
+### Result Size Limits
+
+<Warning>
+The maximum size of a Task's results is limited by the container termination message feature of Kubernetes, currently 4096 bytes. The more steps you have in a Task, the smaller the result for each step can be.
+</Warning>
+
+For larger results, consider using Workspaces to store and pass data between Tasks within a Pipeline.
+
+## Sidecars
+
+The `sidecars` field specifies a list of Containers to run alongside the Steps in your Task. You can use Sidecars to provide auxiliary functionality, such as Docker in Docker or running a mock API server.
+
+```yaml
+steps:
+  - image: docker
+    name: client
+    script: |
+      #!/usr/bin/env bash
+      cat > Dockerfile << EOF
+      FROM ubuntu
+      RUN apt-get update
+      ENTRYPOINT ["echo", "hello"]
+      EOF
+      docker build -t hello . && docker run hello
+      docker images
+    volumeMounts:
+      - mountPath: /var/run/
+        name: dind-socket
+sidecars:
+  - image: docker:18.05-dind
+    name: server
+    securityContext:
+      privileged: true
+    volumeMounts:
+      - mountPath: /var/lib/docker
+        name: dind-storage
+      - mountPath: /var/run/
+        name: dind-socket
+volumes:
+  - name: dind-storage
+    emptyDir: {}
+  - name: dind-socket
+    emptyDir: {}
+```
+
+## Variable Substitution
+
+Tekton provides variables to inject values into the contents of certain fields. The mechanism is simple - string replacement is performed by the Tekton Controller when a TaskRun is executed.
+
+### Available Variables
+
+- `$(params.<name>)` - Access parameter values
+- `$(workspaces.<name>.path)` - Path to a Workspace
+- `$(workspaces.<name>.bound)` - Whether a workspace was bound (true/false)
+- `$(workspaces.<name>.claim)` - Name of the PersistentVolumeClaim
+- `$(workspaces.<name>.volume)` - Name of the Volume
+- `$(results.<name>.path)` - Path where results are written
+- `$(steps.<step-name>.exitCode.path)` - Path to a step's exit code
+
+### Examples
+
+```yaml
+steps:
+  - name: build
+    image: my-builder
+    args:
+      - "--dockerfile=$(params.pathToDockerFile)"
+      - "--context=$(workspaces.source.path)"
+  - name: check-previous-step
+    image: alpine
+    script: |
+      EXIT_CODE=$(cat $(steps.build.exitCode.path))
+      echo "Previous step exited with: $EXIT_CODE"
+```

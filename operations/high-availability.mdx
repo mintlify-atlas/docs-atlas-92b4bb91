@@ -1,0 +1,368 @@
+---
+title: High Availability
+description: Configure HA support for Tekton Pipelines controllers
+---
+
+High Availability (HA) support allows Tekton Pipelines components to remain operational when disruptions occur, such as nodes being drained for upgrades or instance failures.
+
+## Overview
+
+Tekton Pipelines provides HA support for two main components:
+
+- **Controller** - Uses active/active model with distributed workqueue across buckets
+- **Webhook** - Stateless deployment that can be easily scaled and auto-scaled
+
+By default, both components run with a single replica to reduce resource usage, effectively disabling HA.
+
+## Controller High Availability
+
+The Controller achieves HA through an **active/active model** where all replicas can receive and process work items. The workqueue is distributed across buckets, with each replica owning a subset of those buckets.
+
+### Configuring Controller Replicas
+
+To enable HA for the Controller, increase the replica count to more than one:
+
+```bash
+kubectl -n tekton-pipelines scale deployment tekton-pipelines-controller --replicas=3
+```
+
+Or modify the controller deployment directly in `config/controller.yaml`:
+
+```yaml
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: tekton-pipelines-controller
+  namespace: tekton-pipelines
+spec:
+  replicas: 3
+  # ... rest of configuration
+```
+
+### Leader Election Configuration
+
+Leader election is configured in the `config-leader-election-controller` ConfigMap:
+
+```yaml
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: config-leader-election-controller
+  namespace: tekton-pipelines
+data:
+  buckets: "1"
+  lease-duration: "60s"
+  renew-deadline: "40s"
+  retry-period: "10s"
+```
+
+<ParamField path="buckets" type="string" default="1">
+  Number of buckets used to partition the key space of each Reconciler. If this number is M and the replica count is N, the N replicas compete for M buckets.
+  
+  <Note>Maximum value is 10.</Note>
+</ParamField>
+
+<ParamField path="lease-duration" type="duration" default="60s">
+  How long non-leaders wait before trying to acquire the lock. Core Kubernetes controllers use 15s.
+</ParamField>
+
+<ParamField path="renew-deadline" type="duration" default="40s">
+  How long a leader will try to renew the lease before giving up. Core Kubernetes controllers use 10s.
+</ParamField>
+
+<ParamField path="retry-period" type="duration" default="10s">
+  How long the leader election client waits between action attempts. Core Kubernetes controllers use 2s.
+</ParamField>
+
+### How Leader Election Works
+
+1. The workqueue is divided into buckets based on the `buckets` configuration
+2. Each controller replica competes to become the leader of specific buckets
+3. The replica that owns a bucket processes all work items partitioned into that bucket
+4. If a replica fails, other replicas can take over its buckets
+
+### Disabling Controller HA
+
+To disable HA, scale back to one replica:
+
+```bash
+kubectl -n tekton-pipelines scale deployment tekton-pipelines-controller --replicas=1
+```
+
+Alternatively, set the `disable-ha` flag in the controller deployment:
+
+```yaml
+spec:
+  serviceAccountName: tekton-pipelines-controller
+  containers:
+    - name: tekton-pipelines-controller
+      args:
+        - "-disable-ha=true"
+        # Other flags...
+```
+
+<Warning>
+If you set `-disable-ha=false` and run multiple replicas, each replica will process work items separately, leading to unwanted behavior when creating resources. It's recommended to simply run one replica instead of using the flag.
+</Warning>
+
+## Webhook High Availability
+
+The Webhook deployment is stateless, making it easier to configure for HA and enabling autoscaling based on load.
+
+### Configuring Webhook Replicas
+
+Increase the number of webhook replicas:
+
+```bash
+kubectl -n tekton-pipelines scale deployment tekton-pipelines-webhook --replicas=3
+```
+
+Or modify the webhook deployment in `config/webhook.yaml`:
+
+```yaml
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: tekton-pipelines-webhook
+  namespace: tekton-pipelines
+spec:
+  replicas: 3
+  # ... rest of configuration
+```
+
+### Horizontal Pod Autoscaling
+
+Tekton Pipelines includes a HorizontalPodAutoscaler for the webhook:
+
+```yaml
+apiVersion: autoscaling/v2
+kind: HorizontalPodAutoscaler
+metadata:
+  name: tekton-pipelines-webhook
+  namespace: tekton-pipelines
+spec:
+  minReplicas: 1
+  maxReplicas: 5
+  scaleTargetRef:
+    apiVersion: apps/v1
+    kind: Deployment
+    name: tekton-pipelines-webhook
+  metrics:
+    - type: Resource
+      resource:
+        name: cpu
+        target:
+          type: Utilization
+          averageUtilization: 100
+```
+
+To increase the minimum number of replicas:
+
+```bash
+kubectl -n tekton-pipelines patch hpa tekton-pipelines-webhook \
+  --patch '{"spec":{"minReplicas":3}}'
+```
+
+<Note>
+The webhook requires a [Metrics Server](https://github.com/kubernetes-sigs/metrics-server) in your cluster for the HorizontalPodAutoscaler to function properly.
+</Note>
+
+### Avoiding Disruptions
+
+To ensure minimum webhook availability during node disruptions, define a PodDisruptionBudget:
+
+```yaml
+apiVersion: policy/v1
+kind: PodDisruptionBudget
+metadata:
+  name: tekton-pipelines-webhook
+  namespace: tekton-pipelines
+  labels:
+    app.kubernetes.io/name: webhook
+    app.kubernetes.io/component: webhook
+    app.kubernetes.io/instance: default
+    app.kubernetes.io/part-of: tekton-pipelines
+spec:
+  minAvailable: 1
+  selector:
+    matchLabels:
+      app.kubernetes.io/name: webhook
+      app.kubernetes.io/component: webhook
+      app.kubernetes.io/instance: default
+      app.kubernetes.io/part-of: tekton-pipelines
+```
+
+This ensures at least one webhook replica remains available during voluntary disruptions like node drains.
+
+### Pod Anti-Affinity
+
+Webhook replicas are configured with pod anti-affinity by default to avoid scheduling all replicas on the same node:
+
+```yaml
+spec:
+  template:
+    spec:
+      affinity:
+        podAntiAffinity:
+          preferredDuringSchedulingIgnoredDuringExecution:
+          - podAffinityTerm:
+              labelSelector:
+                matchLabels:
+                  app.kubernetes.io/name: webhook
+                  app.kubernetes.io/component: webhook
+              topologyKey: kubernetes.io/hostname
+            weight: 100
+```
+
+This ensures that a single node failure doesn't make all webhook replicas unavailable.
+
+### Cluster Autoscaler Considerations
+
+By default, the webhook deployment is not configured to block the Cluster Autoscaler from scaling down nodes. During node drains, the webhook might become temporarily unavailable.
+
+To prevent this, either:
+
+1. **Add the safe-to-evict annotation:**
+
+```yaml
+spec:
+  template:
+    metadata:
+      annotations:
+        cluster-autoscaler.kubernetes.io/safe-to-evict: "false"
+```
+
+2. **Configure multiple webhook replicas** (recommended approach)
+
+## Prerequisites for HA
+
+### Metrics Server
+
+High concurrency scenarios and webhook autoscaling require a Metrics Server:
+
+```bash
+kubectl apply -f https://github.com/kubernetes-sigs/metrics-server/releases/latest/download/components.yaml
+```
+
+Verify the Metrics Server is running:
+
+```bash
+kubectl get deployment metrics-server -n kube-system
+```
+
+## Complete HA Configuration Example
+
+```yaml
+# Controller with 3 replicas
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: tekton-pipelines-controller
+  namespace: tekton-pipelines
+spec:
+  replicas: 3
+  selector:
+    matchLabels:
+      app.kubernetes.io/name: controller
+  template:
+    spec:
+      serviceAccountName: tekton-pipelines-controller
+      containers:
+      - name: tekton-pipelines-controller
+        image: gcr.io/tekton-releases/github.com/tektoncd/pipeline/cmd/controller:latest
+---
+# Leader election with 10 buckets
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: config-leader-election-controller
+  namespace: tekton-pipelines
+data:
+  buckets: "10"
+  lease-duration: "60s"
+  renew-deadline: "40s"
+  retry-period: "10s"
+---
+# Webhook with 3 replicas
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: tekton-pipelines-webhook
+  namespace: tekton-pipelines
+spec:
+  replicas: 3
+  selector:
+    matchLabels:
+      app.kubernetes.io/name: webhook
+  template:
+    spec:
+      serviceAccountName: tekton-pipelines-webhook
+      containers:
+      - name: webhook
+        image: gcr.io/tekton-releases/github.com/tektoncd/pipeline/cmd/webhook:latest
+---
+# Webhook HPA
+apiVersion: autoscaling/v2
+kind: HorizontalPodAutoscaler
+metadata:
+  name: tekton-pipelines-webhook
+  namespace: tekton-pipelines
+spec:
+  minReplicas: 3
+  maxReplicas: 10
+  scaleTargetRef:
+    apiVersion: apps/v1
+    kind: Deployment
+    name: tekton-pipelines-webhook
+  metrics:
+    - type: Resource
+      resource:
+        name: cpu
+        target:
+          type: Utilization
+          averageUtilization: 80
+---
+# Webhook PDB
+apiVersion: policy/v1
+kind: PodDisruptionBudget
+metadata:
+  name: tekton-pipelines-webhook
+  namespace: tekton-pipelines
+spec:
+  minAvailable: 2
+  selector:
+    matchLabels:
+      app.kubernetes.io/name: webhook
+      app.kubernetes.io/component: webhook
+```
+
+## Verification
+
+Verify your HA configuration:
+
+```bash
+# Check controller replicas
+kubectl get deployment tekton-pipelines-controller -n tekton-pipelines
+
+# Check webhook replicas
+kubectl get deployment tekton-pipelines-webhook -n tekton-pipelines
+
+# Check HPA status
+kubectl get hpa -n tekton-pipelines
+
+# Check PDB status
+kubectl get pdb -n tekton-pipelines
+
+# View leader election leases
+kubectl get lease -n tekton-pipelines
+```
+
+## Best Practices
+
+1. **Start with 3 replicas** for both controller and webhook in production environments
+2. **Configure PodDisruptionBudgets** to maintain availability during cluster maintenance
+3. **Use HPA for webhooks** to handle variable load automatically
+4. **Monitor metrics** to tune replica counts and resource requests/limits
+5. **Increase bucket count** to 10 when running many controller replicas for better load distribution
+6. **Test failover** by draining nodes or deleting pods to verify HA behavior
+7. **Set appropriate resource requests/limits** to ensure pods can be scheduled across multiple nodes

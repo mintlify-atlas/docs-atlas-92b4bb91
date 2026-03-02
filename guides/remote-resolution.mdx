@@ -1,0 +1,535 @@
+---
+title: Remote Resolution
+description: Reference Tasks and Pipelines from remote sources like Git, OCI bundles, and Artifact Hub
+---
+
+Remote resolution allows you to reference Tasks and Pipelines stored outside your cluster, enabling sharing and reuse across teams and organizations.
+
+## Overview
+
+Tekton supports multiple remote resolvers:
+
+- **Git resolver**: Fetch from Git repositories
+- **Hub resolver**: Fetch from Tekton Hub or Artifact Hub
+- **Cluster resolver**: Reference resources in other namespaces
+- **Bundles resolver**: Fetch from OCI registries
+- **HTTP resolver**: Fetch from HTTP(S) URLs
+
+Remote resolution promotes:
+- Task and Pipeline reusability
+- Version control for pipeline definitions
+- Centralized catalog management
+- Separation of pipeline definitions from runs
+
+## Prerequisites
+
+Starting with v0.41.0, remote resolvers are enabled by default. Verify they're enabled:
+
+```bash
+kubectl get configmap resolvers-feature-flags -n tekton-pipelines-resolvers -o yaml
+```
+
+Each resolver has a feature flag:
+- `enable-git-resolver`: Git resolver
+- `enable-hub-resolver`: Hub resolver
+- `enable-cluster-resolver`: Cluster resolver
+- `enable-bundles-resolver`: Bundles resolver
+- `enable-http-resolver`: HTTP resolver
+
+## Git Resolver
+
+Reference Tasks and Pipelines from Git repositories:
+
+### Basic Git Resolution
+
+```yaml
+apiVersion: tekton.dev/v1
+kind: PipelineRun
+metadata:
+  generateName: git-resolver-
+spec:
+  pipelineRef:
+    resolver: git
+    params:
+      - name: url
+        value: https://github.com/tektoncd/catalog.git
+      - name: revision
+        value: main
+      - name: pathInRepo
+        value: task/git-clone/0.10/git-clone.yaml
+  params:
+    - name: url
+      value: https://github.com/my-org/my-repo
+  workspaces:
+    - name: output
+      volumeClaimTemplate:
+        spec:
+          accessModes:
+            - ReadWriteOnce
+          resources:
+            requests:
+              storage: 1Gi
+```
+
+### Git Resolver Parameters
+
+| Parameter | Description | Required | Default |
+|-----------|-------------|----------|----------|
+| `url` | Repository URL | Yes | - |
+| `revision` | Git revision (branch, tag, commit) | No | `main` |
+| `pathInRepo` | Path to YAML file in repo | Yes | - |
+| `token` | Secret name for authentication | No | - |
+| `tokenKey` | Key in secret containing token | No | `token` |
+| `serverURL` | Custom Git server API URL | No | - |
+| `scmType` | SCM type (github, gitlab, gitea, bitbucket) | No | Auto-detect |
+
+### Using Private Repositories
+
+<Steps>
+
+<Step title="Create authentication secret">
+
+```yaml
+apiVersion: v1
+kind: Secret
+metadata:
+  name: git-credentials
+type: Opaque
+stringData:
+  token: ghp_your_github_token_here
+```
+
+</Step>
+
+<Step title="Reference in PipelineRun">
+
+```yaml
+apiVersion: tekton.dev/v1
+kind: PipelineRun
+metadata:
+  generateName: private-git-
+spec:
+  pipelineRef:
+    resolver: git
+    params:
+      - name: url
+        value: https://github.com/my-org/private-repo.git
+      - name: revision
+        value: main
+      - name: pathInRepo
+        value: pipelines/build.yaml
+      - name: token
+        value: git-credentials
+      - name: tokenKey
+        value: token
+```
+
+</Step>
+
+</Steps>
+
+### Custom Git Server
+
+For self-hosted Git servers:
+
+```yaml
+pipelineRef:
+  resolver: git
+  params:
+    - name: url
+      value: https://gitlab.example.com/my-group/my-repo.git
+    - name: revision
+      value: v1.0.0
+    - name: pathInRepo
+      value: tekton/pipeline.yaml
+    - name: serverURL
+      value: https://gitlab.example.com
+    - name: scmType
+      value: gitlab
+    - name: token
+      value: gitlab-token-secret
+```
+
+## Hub Resolver
+
+Fetch Tasks and Pipelines from Tekton Hub or Artifact Hub:
+
+```yaml
+apiVersion: tekton.dev/v1
+kind: PipelineRun
+metadata:
+  generateName: hub-resolver-
+spec:
+  pipelineRef:
+    resolver: hub
+    params:
+      - name: catalog
+        value: Tekton
+      - name: kind
+        value: pipeline
+      - name: name
+        value: buildpacks
+      - name: version
+        value: "0.2"
+  params:
+    - name: BUILDER_IMAGE
+      value: docker.io/cnbs/sample-builder:bionic
+    - name: APP_IMAGE
+      value: my-registry/my-app
+    - name: SOURCE_URL
+      value: https://github.com/buildpacks/samples
+  workspaces:
+    - name: source-ws
+      volumeClaimTemplate:
+        spec:
+          accessModes:
+            - ReadWriteOnce
+          resources:
+            requests:
+              storage: 1Gi
+```
+
+### Hub Resolver Parameters
+
+| Parameter | Description | Required | Default |
+|-----------|-------------|----------|----------|
+| `name` | Resource name | Yes | - |
+| `kind` | Resource kind (task or pipeline) | Yes | `task` |
+| `version` | Resource version | No | Latest |
+| `catalog` | Catalog name (Tekton, Tekton-nightly) | No | `Tekton` |
+| `type` | Hub type (artifact or tekton) | No | `artifact` |
+
+### Using TaskRuns with Hub Resolver
+
+```yaml
+apiVersion: tekton.dev/v1
+kind: TaskRun
+metadata:
+  generateName: hub-task-
+spec:
+  taskRef:
+    resolver: hub
+    params:
+      - name: catalog
+        value: Tekton
+      - name: kind
+        value: task
+      - name: name
+        value: git-clone
+      - name: version
+        value: "0.10"
+  params:
+    - name: url
+      value: https://github.com/tektoncd/pipeline
+  workspaces:
+    - name: output
+      emptyDir: {}
+```
+
+## Cluster Resolver
+
+Reference Tasks and Pipelines in other namespaces within the same cluster:
+
+```yaml
+apiVersion: tekton.dev/v1
+kind: PipelineRun
+metadata:
+  name: cluster-resolver-example
+  namespace: my-namespace
+spec:
+  pipelineRef:
+    resolver: cluster
+    params:
+      - name: kind
+        value: pipeline
+      - name: name
+        value: shared-pipeline
+      - name: namespace
+        value: tekton-resources
+```
+
+### Cluster Resolver Parameters
+
+| Parameter | Description | Required | Default |
+|-----------|-------------|----------|----------|
+| `kind` | Resource kind (task or pipeline) | Yes | - |
+| `name` | Resource name | Yes | - |
+| `namespace` | Namespace containing the resource | Yes | - |
+
+<Note>
+The ServiceAccount running the PipelineRun needs RBAC permissions to read the referenced resource in the target namespace.
+</Note>
+
+### RBAC for Cluster Resolver
+
+```yaml
+apiVersion: rbac.authorization.k8s.io/v1
+kind: Role
+metadata:
+  name: tekton-resource-reader
+  namespace: tekton-resources
+rules:
+  - apiGroups: ["tekton.dev"]
+    resources: ["tasks", "pipelines"]
+    verbs: ["get", "list"]
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: RoleBinding
+metadata:
+  name: tekton-resource-reader-binding
+  namespace: tekton-resources
+roleRef:
+  apiGroup: rbac.authorization.k8s.io
+  kind: Role
+  name: tekton-resource-reader
+subjects:
+  - kind: ServiceAccount
+    name: default
+    namespace: my-namespace
+```
+
+## HTTP Resolver
+
+Fetch Tasks and Pipelines from HTTP(S) URLs:
+
+```yaml
+apiVersion: tekton.dev/v1
+kind: PipelineRun
+metadata:
+  generateName: http-resolver-
+spec:
+  pipelineRef:
+    resolver: http
+    params:
+      - name: url
+        value: https://raw.githubusercontent.com/tektoncd/catalog/main/task/git-clone/0.10/git-clone.yaml
+```
+
+### HTTP Resolver with Authentication
+
+```yaml
+apiVersion: v1
+kind: Secret
+metadata:
+  name: http-credentials
+type: Opaque
+stringData:
+  token: bearer-token-value
+---
+apiVersion: tekton.dev/v1
+kind: PipelineRun
+metadata:
+  generateName: http-auth-
+spec:
+  pipelineRef:
+    resolver: http
+    params:
+      - name: url
+        value: https://api.example.com/pipelines/build.yaml
+      - name: secret-name
+        value: http-credentials
+      - name: secret-key
+        value: token
+```
+
+## Getting Started Example
+
+<Steps>
+
+<Step title="Create a Pipeline in Git">
+
+Create `pipeline.yaml` in your repository:
+
+```yaml
+kind: Pipeline
+apiVersion: tekton.dev/v1
+metadata:
+  name: a-simple-pipeline
+spec:
+  params:
+    - name: username
+  tasks:
+    - name: task-1
+      params:
+        - name: username
+          value: $(params.username)
+      taskSpec:
+        params:
+          - name: username
+        steps:
+          - image: alpine:3.15
+            script: |
+              echo "hello $(params.username)"
+```
+
+</Step>
+
+<Step title="Commit and push">
+
+```bash
+git add pipeline.yaml
+git commit -m "Add a basic pipeline"
+git push origin main
+```
+
+</Step>
+
+<Step title="Create a PipelineRun">
+
+```yaml
+kind: PipelineRun
+apiVersion: tekton.dev/v1
+metadata:
+  name: run-basic-pipeline-from-git
+spec:
+  pipelineRef:
+    resolver: git
+    params:
+      - name: url
+        value: https://github.com/your-org/your-repo
+      - name: revision
+        value: main
+      - name: pathInRepo
+        value: pipeline.yaml
+  params:
+    - name: username
+      value: tekton-user
+```
+
+</Step>
+
+<Step title="Apply and monitor">
+
+```bash
+kubectl apply -f pipelinerun.yaml
+kubectl get pipelineruns -w
+```
+
+</Step>
+
+</Steps>
+
+## Best Practices
+
+### Version Control
+
+<Tip>
+Always specify explicit revisions (tags or commit SHAs) in production to ensure reproducibility.
+</Tip>
+
+```yaml
+# Good: Explicit version
+params:
+  - name: revision
+    value: v1.2.3
+
+# Also good: Commit SHA
+params:
+  - name: revision
+    value: abc123def456
+
+# Avoid in production: Branch name
+params:
+  - name: revision
+    value: main
+```
+
+### Organize Remote Resources
+
+```
+my-repo/
+├── tekton/
+│   ├── tasks/
+│   │   ├── build.yaml
+│   │   ├── test.yaml
+│   │   └── deploy.yaml
+│   └── pipelines/
+│       ├── ci.yaml
+│       └── cd.yaml
+```
+
+### Cache Considerations
+
+<Note>
+Tekton caches resolved resources. Cache TTL can be configured in the resolver configuration.
+</Note>
+
+### Security
+
+```yaml
+# Use secrets for authentication
+params:
+  - name: token
+    value: git-token-secret
+
+# Don't embed credentials in URLs
+# Bad:
+value: https://username:password@github.com/repo
+
+# Good:
+value: https://github.com/repo
+# With separate token parameter
+```
+
+## Troubleshooting
+
+<Accordion title="Resolution failed: repository not found">
+
+Check:
+1. Repository URL is correct
+2. Repository is public, or authentication is configured
+3. Token has appropriate permissions
+4. Branch/tag/revision exists
+
+View resolver logs:
+```bash
+kubectl logs -n tekton-pipelines-resolvers deployment/tekton-pipelines-remote-resolvers
+```
+
+</Accordion>
+
+<Accordion title="Resolution failed: file not found">
+
+Verify:
+1. `pathInRepo` is correct (case-sensitive)
+2. File exists at the specified revision
+3. File contains valid Tekton YAML
+
+Test manually:
+```bash
+git clone <repo-url>
+git checkout <revision>
+cat <pathInRepo>
+```
+
+</Accordion>
+
+<Accordion title="RBAC errors with cluster resolver">
+
+Ensure ServiceAccount has permissions:
+```bash
+# Check ServiceAccount
+kubectl get sa -n <namespace>
+
+# Check RoleBindings
+kubectl get rolebinding -n <target-namespace>
+
+# Describe PipelineRun for details
+kubectl describe pipelinerun <name>
+```
+
+</Accordion>
+
+## Comparison of Resolvers
+
+| Resolver | Use Case | Pros | Cons |
+|----------|----------|------|------|
+| Git | Versioned pipelines in repos | Version control, collaboration | Requires Git access |
+| Hub | Curated, community tasks | Verified tasks, easy discovery | Limited to Hub catalog |
+| Cluster | Cross-namespace sharing | No external dependencies | Cluster-scoped only |
+| HTTP | Generic URL-based | Flexible, simple | No versioning |
+| Bundles | OCI registry storage | Immutable, cached | Requires OCI registry |
+
+<Tip>
+Use Git resolver for your organization's custom Tasks and Pipelines, and Hub resolver for community-maintained resources.
+</Tip>

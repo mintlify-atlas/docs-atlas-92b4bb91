@@ -1,0 +1,407 @@
+---
+title: Performance Tuning
+description: Configure Tekton Pipelines controller performance parameters
+---
+
+Tekton Pipelines performance can be tuned by adjusting controller parameters including thread count, API throttling, and resource limits.
+
+## Overview
+
+Three primary parameters impact Tekton controller performance:
+
+- **ThreadsPerController** - Number of goroutines for processing the work queue
+- **QPS** (Queries Per Second) - Maximum queries to the Kubernetes API server
+- **Burst** - Maximum burst for API throttling
+
+## Default Values
+
+Out-of-the-box configuration:
+
+| Parameter | Default Value | Source |
+|-----------|---------------|--------|
+| ThreadsPerController | 2 | [knative/pkg](https://github.com/knative/pkg/blob/main/controller/controller.go#L58) |
+| QPS | 5.0 | [client-go](https://github.com/tektoncd/pipeline/blob/main/vendor/k8s.io/client-go/rest/config.go#L44) |
+| Burst | 10 | [client-go](https://github.com/tektoncd/pipeline/blob/main/vendor/k8s.io/client-go/rest/config.go#L45) |
+
+<Note>
+QPS and Burst values are multiplied by 2 internally, so the actual values are double the configured values.
+</Note>
+
+## Configuration Methods
+
+Performance parameters can be configured using:
+
+1. Command-line flags in the controller deployment
+2. Environment variables
+
+<Note>
+Command-line flags take precedence over environment variables.
+</Note>
+
+## Configuring via Command-Line Flags
+
+Modify the controller deployment in `config/controller.yaml`:
+
+```yaml
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: tekton-pipelines-controller
+  namespace: tekton-pipelines
+spec:
+  template:
+    spec:
+      serviceAccountName: tekton-pipelines-controller
+      containers:
+      - name: tekton-pipelines-controller
+        image: ko://github.com/tektoncd/pipeline/cmd/controller
+        args:
+        - "-kube-api-qps=50"
+        - "-kube-api-burst=50"
+        - "-threads-per-controller=32"
+        # Other flags...
+```
+
+Apply the changes:
+
+```bash
+kubectl apply -f config/controller.yaml
+```
+
+### Available Flags
+
+<ParamField path="-threads-per-controller" type="integer" default="2">
+  Number of threads (goroutines) to create per controller for processing the work queue.
+  
+  Higher values increase parallelism but consume more memory.
+  
+  ```yaml
+  args:
+    - "-threads-per-controller=32"
+  ```
+</ParamField>
+
+<ParamField path="-kube-api-qps" type="float" default="5.0">
+  Maximum queries per second to the Kubernetes API server from this client.
+  
+  **Note:** Actual QPS is multiplied by 2 internally.
+  
+  ```yaml
+  args:
+    - "-kube-api-qps=50"
+  ```
+  
+  With this configuration, actual QPS = 100.
+</ParamField>
+
+<ParamField path="-kube-api-burst" type="integer" default="10">
+  Maximum burst for throttling API requests.
+  
+  **Note:** Actual burst is multiplied by 2 internally.
+  
+  ```yaml
+  args:
+    - "-kube-api-burst=50"
+  ```
+  
+  With this configuration, actual burst = 100.
+</ParamField>
+
+## Configuring via Environment Variables
+
+Alternatively, use environment variables:
+
+```yaml
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: tekton-pipelines-controller
+  namespace: tekton-pipelines
+spec:
+  template:
+    spec:
+      containers:
+      - name: tekton-pipelines-controller
+        image: ko://github.com/tektoncd/pipeline/cmd/controller
+        env:
+        - name: THREADS_PER_CONTROLLER
+          value: "32"
+        - name: KUBE_API_QPS
+          value: "50"
+        - name: KUBE_API_BURST
+          value: "50"
+```
+
+<ParamField path="THREADS_PER_CONTROLLER" type="string">
+  Environment variable for threads per controller.
+  
+  ```yaml
+  env:
+    - name: THREADS_PER_CONTROLLER
+      value: "32"
+  ```
+</ParamField>
+
+<ParamField path="KUBE_API_QPS" type="string">
+  Environment variable for API queries per second.
+  
+  ```yaml
+  env:
+    - name: KUBE_API_QPS
+      value: "50"
+  ```
+</ParamField>
+
+<ParamField path="KUBE_API_BURST" type="string">
+  Environment variable for API burst throttling.
+  
+  ```yaml
+  env:
+    - name: KUBE_API_BURST
+      value: "50"
+  ```
+</ParamField>
+
+## Performance Tuning Guidelines
+
+### Small Deployments (< 100 PipelineRuns/day)
+
+Use default values:
+
+```yaml
+args:
+  - "-threads-per-controller=2"
+  - "-kube-api-qps=5"
+  - "-kube-api-burst=10"
+```
+
+### Medium Deployments (100-1000 PipelineRuns/day)
+
+Increase concurrency:
+
+```yaml
+args:
+  - "-threads-per-controller=16"
+  - "-kube-api-qps=25"
+  - "-kube-api-burst=50"
+```
+
+### Large Deployments (> 1000 PipelineRuns/day)
+
+Maximize throughput:
+
+```yaml
+args:
+  - "-threads-per-controller=32"
+  - "-kube-api-qps=50"
+  - "-kube-api-burst=100"
+```
+
+### High-Concurrency Scenarios
+
+For clusters with many simultaneous PipelineRuns:
+
+```yaml
+args:
+  - "-threads-per-controller=64"
+  - "-kube-api-qps=100"
+  - "-kube-api-burst=200"
+```
+
+## Resource Requirements
+
+Adjust controller resource limits based on performance configuration:
+
+```yaml
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: tekton-pipelines-controller
+  namespace: tekton-pipelines
+spec:
+  template:
+    spec:
+      containers:
+      - name: tekton-pipelines-controller
+        resources:
+          requests:
+            cpu: "500m"
+            memory: "512Mi"
+          limits:
+            cpu: "2000m"
+            memory: "2Gi"
+        args:
+        - "-threads-per-controller=32"
+        - "-kube-api-qps=50"
+        - "-kube-api-burst=50"
+```
+
+### Resource Scaling Guidelines
+
+| Threads | CPU Request | Memory Request | CPU Limit | Memory Limit |
+|---------|-------------|----------------|-----------|-------------|
+| 2 (default) | 100m | 256Mi | 500m | 512Mi |
+| 16 | 250m | 512Mi | 1000m | 1Gi |
+| 32 | 500m | 512Mi | 2000m | 2Gi |
+| 64 | 1000m | 1Gi | 4000m | 4Gi |
+
+## Monitoring Performance
+
+### Key Metrics
+
+Monitor these metrics to assess controller performance:
+
+```promql
+# Work queue depth
+workqueue_depth{name="pipelinerun"}
+
+# Reconciliation latency
+controller_reconcile_duration_seconds{controller="pipelinerun-controller"}
+
+# API client latency
+tekton_pipelines_controller_client_latency_bucket
+
+# Running resources
+tekton_pipelines_controller_running_pipelineruns
+tekton_pipelines_controller_running_taskruns
+```
+
+### Performance Indicators
+
+**Good Performance:**
+- Work queue depth remains low (< 10)
+- Reconciliation latency < 1s (p95)
+- API client latency < 100ms (p95)
+- No throttling errors in logs
+
+**Poor Performance:**
+- Work queue depth grows unbounded
+- Reconciliation latency > 5s (p95)
+- API client latency > 500ms (p95)
+- Frequent "rate limit exceeded" errors
+
+## Troubleshooting
+
+### High Work Queue Depth
+
+**Symptoms:** Work queue depth metric increases continuously
+
+**Solutions:**
+1. Increase `threads-per-controller`
+2. Verify API server health
+3. Check for slow reconciliation (enable debug logging)
+
+```bash
+kubectl logs -n tekton-pipelines -l app=tekton-pipelines-controller --tail=100
+```
+
+### API Rate Limiting
+
+**Symptoms:** Logs show "rate limit exceeded" or "client rate limiter Wait"
+
+**Solutions:**
+1. Increase `kube-api-qps` and `kube-api-burst`
+2. Verify API server capacity
+3. Consider cluster API server scaling
+
+```bash
+# Check for rate limit errors
+kubectl logs -n tekton-pipelines -l app=tekton-pipelines-controller | grep -i "rate limit"
+```
+
+### High Memory Usage
+
+**Symptoms:** Controller pods are OOMKilled or approaching memory limits
+
+**Solutions:**
+1. Increase memory limits
+2. Reduce `threads-per-controller` if excessively high
+3. Check for memory leaks (file issue if found)
+
+```bash
+# Check memory usage
+kubectl top pod -n tekton-pipelines -l app=tekton-pipelines-controller
+```
+
+### Slow Reconciliation
+
+**Symptoms:** PipelineRuns take long to start or complete
+
+**Solutions:**
+1. Enable debug logging to identify bottlenecks
+2. Increase `threads-per-controller`
+3. Verify webhook performance
+4. Check node and pod resource availability
+
+## Complete High-Performance Configuration
+
+```yaml
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: tekton-pipelines-controller
+  namespace: tekton-pipelines
+spec:
+  replicas: 3  # HA configuration
+  template:
+    spec:
+      serviceAccountName: tekton-pipelines-controller
+      containers:
+      - name: tekton-pipelines-controller
+        image: ko://github.com/tektoncd/pipeline/cmd/controller
+        args:
+        # Performance tuning
+        - "-threads-per-controller=32"
+        - "-kube-api-qps=50"
+        - "-kube-api-burst=50"
+        # Other required args
+        - "-entrypoint-image=ko://github.com/tektoncd/pipeline/cmd/entrypoint"
+        - "-nop-image=ko://github.com/tektoncd/pipeline/cmd/nop"
+        - "-sidecarlogresults-image=ko://github.com/tektoncd/pipeline/cmd/sidecarlogresults"
+        - "-workingdirinit-image=ko://github.com/tektoncd/pipeline/cmd/workingdirinit"
+        - "-shell-image=cgr.dev/chainguard/busybox@sha256:19f02276bf8dbdd62f069b922f10c65262cc34b710eea26ff928129a736be791"
+        resources:
+          requests:
+            cpu: "500m"
+            memory: "512Mi"
+          limits:
+            cpu: "2000m"
+            memory: "2Gi"
+        env:
+        - name: SYSTEM_NAMESPACE
+          valueFrom:
+            fieldRef:
+              fieldPath: metadata.namespace
+        - name: CONFIG_LOGGING_NAME
+          value: config-logging
+        - name: CONFIG_OBSERVABILITY_NAME
+          value: config-observability
+        - name: CONFIG_FEATURE_FLAGS_NAME
+          value: feature-flags
+        - name: METRICS_DOMAIN
+          value: tekton.dev/pipeline
+---
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: config-leader-election-controller
+  namespace: tekton-pipelines
+data:
+  buckets: "10"  # Max buckets for HA
+  lease-duration: "60s"
+  renew-deadline: "40s"
+  retry-period: "10s"
+```
+
+## Best Practices
+
+1. **Start with defaults** and increase gradually based on metrics
+2. **Match thread count to workload** - Don't over-provision
+3. **Monitor API server impact** when increasing QPS/Burst
+4. **Adjust resource limits** proportionally with thread count
+5. **Enable HA** for production deployments (3+ replicas)
+6. **Use HPA** for webhook to handle variable load
+7. **Test changes** in non-production environment first
+8. **Monitor continuously** after configuration changes
+9. **Document tuning decisions** for future reference
+10. **Review quarterly** and adjust based on workload changes

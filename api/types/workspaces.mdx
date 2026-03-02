@@ -1,0 +1,379 @@
+---
+title: Workspace Types
+description: Reference for Tekton workspace types and usage
+---
+
+Workspaces allow Tasks to share data with each other and declare the volumes they need at runtime.
+
+## WorkspaceDeclaration
+
+Declares a workspace required by a Task.
+
+<ParamField path="name" type="string" required>
+  Name of the workspace.
+
+  Used to reference the workspace in steps and bind it at runtime.
+</ParamField>
+
+<ParamField path="description" type="string">
+  Human-readable description of how the workspace is used.
+</ParamField>
+
+<ParamField path="mountPath" type="string">
+  Path where the workspace will be mounted.
+
+  Defaults to `/workspace/<name>` if not specified.
+</ParamField>
+
+<ParamField path="readOnly" type="boolean" default={false}>
+  Whether the workspace is read-only.
+
+  If true, the volume is mounted read-only.
+</ParamField>
+
+<ParamField path="optional" type="boolean" default={false}>
+  Whether the workspace is optional.
+
+  If true, the Task can run without this workspace being provided.
+</ParamField>
+
+## WorkspaceBinding
+
+Binds a declared workspace to an actual volume at runtime (in TaskRuns/PipelineRuns).
+
+<ParamField path="name" type="string" required>
+  Name of the workspace being bound.
+
+  Must match a workspace declared in the Task or Pipeline.
+</ParamField>
+
+<ParamField path="subPath" type="string">
+  Subdirectory on the volume to use for this binding.
+
+  Useful when multiple workspaces share the same volume.
+</ParamField>
+
+### Volume Sources
+
+One of the following volume sources must be specified:
+
+<ParamField path="emptyDir" type="EmptyDirVolumeSource">
+  Temporary directory that shares the Task's lifetime.
+
+  Data is lost when the Task completes.
+
+  ```yaml
+  workspaces:
+    - name: scratch
+      emptyDir: {}
+  ```
+</ParamField>
+
+<ParamField path="persistentVolumeClaim" type="PersistentVolumeClaimVolumeSource">
+  Reference to an existing PersistentVolumeClaim.
+
+  ```yaml
+  workspaces:
+    - name: source
+      persistentVolumeClaim:
+        claimName: my-pvc
+  ```
+
+  <Expandable title="PersistentVolumeClaimVolumeSource fields">
+    <ParamField path="claimName" type="string" required>
+      Name of the PVC in the same namespace.
+    </ParamField>
+  </Expandable>
+</ParamField>
+
+<ParamField path="volumeClaimTemplate" type="PersistentVolumeClaim">
+  Template for creating a PVC for each run.
+
+  The PVC is automatically created and deleted.
+
+  ```yaml
+  workspaces:
+    - name: source
+      volumeClaimTemplate:
+        spec:
+          accessModes:
+            - ReadWriteOnce
+          resources:
+            requests:
+              storage: 1Gi
+  ```
+</ParamField>
+
+<ParamField path="configMap" type="ConfigMapVolumeSource">
+  Populate workspace from a ConfigMap.
+
+  ```yaml
+  workspaces:
+    - name: config
+      configMap:
+        name: my-config
+  ```
+</ParamField>
+
+<ParamField path="secret" type="SecretVolumeSource">
+  Populate workspace from a Secret.
+
+  ```yaml
+  workspaces:
+    - name: credentials
+      secret:
+        secretName: my-secret
+  ```
+</ParamField>
+
+<ParamField path="projected" type="ProjectedVolumeSource">
+  Combine multiple volume sources into one.
+
+  ```yaml
+  workspaces:
+    - name: combined
+      projected:
+        sources:
+          - secret:
+              name: secret1
+          - configMap:
+              name: config1
+  ```
+</ParamField>
+
+<ParamField path="csi" type="CSIVolumeSource">
+  Use a CSI (Container Storage Interface) driver.
+
+  ```yaml
+  workspaces:
+    - name: csi-volume
+      csi:
+        driver: secrets-store.csi.k8s.io
+        readOnly: true
+  ```
+</ParamField>
+
+## PipelineWorkspaceDeclaration
+
+Declares a workspace required by a Pipeline.
+
+<ParamField path="name" type="string" required>
+  Name of the workspace.
+</ParamField>
+
+<ParamField path="description" type="string">
+  Description of how the workspace is used in the Pipeline.
+</ParamField>
+
+<ParamField path="optional" type="boolean" default={false}>
+  Whether the workspace is optional.
+</ParamField>
+
+## WorkspacePipelineTaskBinding
+
+Maps a Pipeline workspace to a Task workspace.
+
+<ParamField path="name" type="string" required>
+  Name of the workspace as declared by the Task.
+</ParamField>
+
+<ParamField path="workspace" type="string">
+  Name of the workspace declared by the Pipeline.
+
+  If omitted, assumes the names match.
+</ParamField>
+
+<ParamField path="subPath" type="string">
+  Subdirectory within the Pipeline workspace.
+</ParamField>
+
+## Using Workspaces in Steps
+
+Access workspace paths in steps:
+
+```yaml
+steps:
+  - name: write-file
+    image: bash
+    script: |
+      echo "Hello" > $(workspaces.source.path)/file.txt
+  - name: read-file
+    image: bash
+    script: |
+      cat $(workspaces.source.path)/file.txt
+```
+
+## Workspace Isolation
+
+Steps can request exclusive access to workspaces:
+
+```yaml
+steps:
+  - name: exclusive-step
+    image: bash
+    workspaces:
+      - name: source
+    script: |
+      # This step has exclusive access to 'source'
+      # Other steps cannot access it simultaneously
+```
+
+## Examples
+
+### Task with Workspace
+
+```yaml
+apiVersion: tekton.dev/v1
+kind: Task
+metadata:
+  name: task-with-workspace
+spec:
+  workspaces:
+    - name: source
+      description: The source code to build
+      mountPath: /workspace/source
+    - name: cache
+      description: Build cache
+      optional: true
+  steps:
+    - name: build
+      image: golang
+      workingDir: $(workspaces.source.path)
+      script: |
+        go build ./...
+```
+
+### TaskRun with emptyDir
+
+```yaml
+apiVersion: tekton.dev/v1
+kind: TaskRun
+metadata:
+  name: taskrun-emptydir
+spec:
+  taskRef:
+    name: task-with-workspace
+  workspaces:
+    - name: source
+      emptyDir: {}
+```
+
+### TaskRun with PVC
+
+```yaml
+apiVersion: tekton.dev/v1
+kind: TaskRun
+metadata:
+  name: taskrun-pvc
+spec:
+  taskRef:
+    name: task-with-workspace
+  workspaces:
+    - name: source
+      persistentVolumeClaim:
+        claimName: source-pvc
+```
+
+### Pipeline Sharing Workspace
+
+```yaml
+apiVersion: tekton.dev/v1
+kind: Pipeline
+metadata:
+  name: build-and-test
+spec:
+  workspaces:
+    - name: shared-data
+      description: Workspace shared between tasks
+  tasks:
+    - name: fetch-source
+      taskRef:
+        name: git-clone
+      workspaces:
+        - name: output
+          workspace: shared-data
+    - name: build
+      taskRef:
+        name: build-task
+      workspaces:
+        - name: source
+          workspace: shared-data
+      runAfter:
+        - fetch-source
+    - name: test
+      taskRef:
+        name: test-task
+      workspaces:
+        - name: source
+          workspace: shared-data
+      runAfter:
+        - build
+```
+
+### PipelineRun with VolumeClaimTemplate
+
+```yaml
+apiVersion: tekton.dev/v1
+kind: PipelineRun
+metadata:
+  name: pipelinerun-with-pvc
+spec:
+  pipelineRef:
+    name: build-and-test
+  workspaces:
+    - name: shared-data
+      volumeClaimTemplate:
+        spec:
+          accessModes:
+            - ReadWriteOnce
+          resources:
+            requests:
+              storage: 5Gi
+          storageClassName: fast-ssd
+```
+
+### Using SubPath
+
+```yaml
+workspaces:
+  - name: cache
+    persistentVolumeClaim:
+      claimName: shared-cache
+    subPath: project-a/build-cache
+```
+
+### ConfigMap Workspace
+
+```yaml
+workspaces:
+  - name: config
+    configMap:
+      name: app-config
+      items:
+        - key: config.yaml
+          path: config.yaml
+```
+
+### Secret Workspace
+
+```yaml
+workspaces:
+  - name: ssh-creds
+    secret:
+      secretName: git-ssh-key
+      items:
+        - key: ssh-privatekey
+          path: id_rsa
+          mode: 0600
+```
+
+## Best Practices
+
+1. **Use descriptive names** - Clearly indicate workspace purpose
+2. **Document workspace usage** - Explain what data the workspace contains
+3. **Use volumeClaimTemplate for pipelines** - Automatically provision storage
+4. **Mark optional workspaces** - Allow tasks to run without optional data
+5. **Use subPath for organization** - Share volumes across workspaces
+6. **Choose appropriate volume types** - Match volume type to data persistence needs
+7. **Set readOnly when appropriate** - Prevent accidental modifications
+8. **Clean up PVCs** - Remove volumeClaimTemplate PVCs after use

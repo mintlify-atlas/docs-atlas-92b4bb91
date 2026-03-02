@@ -1,0 +1,455 @@
+---
+title: Development Guide
+description: Set up your development environment and start contributing to Tekton Pipelines
+---
+
+This guide walks you through setting up a development environment for Tekton Pipelines and covers common development workflows.
+
+## Prerequisites
+
+Before starting, you should familiarize yourself with:
+
+- Kubernetes and Custom Resource Definitions (CRDs)
+- [Controller Logic](https://github.com/tektoncd/pipeline/blob/main/docs/developers/controller-logic.md) - How Tekton extends Kubernetes
+- [Tekton Pipelines documentation](https://github.com/tektoncd/pipeline/blob/main/docs/README.md)
+- [Getting Started tutorial](https://tekton.dev/docs/getting-started/pipelines) - Define and run Tasks and Pipelines
+
+## Setting Up Development Environment
+
+### 1. Setup GitHub Account
+
+GitHub is used for source code management using SSH for authentication.
+
+<Steps>
+  <Step title="Create GitHub account">
+    Create [a GitHub account](https://github.com/join) if you don't already have one.
+  </Step>
+  
+  <Step title="Setup SSH access">
+    Setup [GitHub access via SSH](https://help.github.com/articles/connecting-to-github-with-ssh/).
+  </Step>
+</Steps>
+
+### 2. Install Required Tools
+
+<Steps>
+  <Step title="Install git">
+    Install [`git`](https://help.github.com/articles/set-up-git/) for source control.
+  </Step>
+  
+  <Step title="Install pre-commit">
+    Install [`pre-commit`](https://pre-commit.com/#install) to run git hooks locally:
+    
+    ```shell
+    # After installing, run at the root directory to install git hooks
+    pre-commit install
+    # Run the hooks against all files
+    pre-commit run --all-files
+    ```
+  </Step>
+  
+  <Step title="Install Go">
+    Install [`go`](https://golang.org/doc/install) - Tekton is built in Go.
+    
+    <Note>Go version v1.15 or higher is recommended.</Note>
+  </Step>
+  
+  <Step title="Install ko">
+    Install [`ko`](https://github.com/google/ko#install) to build and deploy container images.
+    
+    <Note>`ko` version v0.5.1 or higher is required.</Note>
+  </Step>
+  
+  <Step title="Install kubectl">
+    Install [`kubectl`](https://kubernetes.io/docs/tasks/tools/install-kubectl/) to interact with Kubernetes.
+    
+    <Warning>The user interacting with your K8s cluster must be a cluster admin to create role bindings.</Warning>
+    
+    **Google Cloud Platform example**:
+    
+    ```shell
+    # Using gcloud to get your current user
+    USER=$(gcloud config get-value core/account)
+    # Make that user a cluster admin
+    kubectl create clusterrolebinding cluster-admin-binding \
+      --clusterrole=cluster-admin \
+      --user="${USER}"
+    ```
+  </Step>
+  
+  <Step title="Install bash">
+    Install [`bash`](https://www.gnu.org/software/bash/) v4 or higher for build scripts.
+    
+    On MacOS, use [Homebrew](https://brew.sh) to install a newer version.
+  </Step>
+  
+  <Step title="Install go-licenses">
+    Install [`go-licenses`](https://github.com/google/go-licenses) - used in e2e tests.
+  </Step>
+</Steps>
+
+### 3. Install Optional Tools
+
+<AccordionGroup>
+  <Accordion title="yamllint">
+    [`yamllint`](https://github.com/adrienverge/yamllint?tab=readme-ov-file#installation) is run against every PR as part of `pre-commit`. Install it so `pre-commit` can use it.
+  </Accordion>
+  
+  <Accordion title="golangci-lint">
+    [`golangci-lint`](https://golangci-lint.run/welcome/install/#local-installation) is run against every PR. Install and run it locally to iterate quickly on linter issues.
+    
+    <Note>Linter findings depend on your Go version. Match the version in `go.mod` to match PR findings.</Note>
+  </Accordion>
+  
+  <Accordion title="woke">
+    [`woke`](https://docs.getwoke.tech/installation/) checks for offensive language in every PR. Install to run checks locally.
+  </Accordion>
+  
+  <Accordion title="delve">
+    [`delve`](https://github.com/go-delve/delve/tree/master/Documentation/installation) is needed for debugging the Tekton controller in VSCode or your IDE.
+  </Accordion>
+</AccordionGroup>
+
+### 4. Configure Environment
+
+Set these environment variables to build, deploy, and run Tekton with `ko`:
+
+<Steps>
+  <Step title="Set GOROOT (optional)">
+    Set `GOROOT` to the Go installation location you want `ko` to use:
+    
+    ```shell
+    export GOROOT=/path/to/go
+    ```
+    
+    <Note>Only needed if you installed Go to a non-default location or have multiple Go versions.</Note>
+  </Step>
+  
+  <Step title="Set KO_DOCKER_REPO">
+    Set the docker repository for pushing developer images:
+    
+    **Using Google Container Registry (GCR)**:
+    ```shell
+    # format: gcr.io/${GCP-PROJECT-NAME}
+    export KO_DOCKER_REPO='gcr.io/my-gcloud-project-name'
+    ```
+    
+    **Using Docker Desktop (Docker Hub)**:
+    ```shell
+    # format: docker.io/${DOCKER_HUB_USERNAME}
+    export KO_DOCKER_REPO='docker.io/my-dockerhub-username'
+    ```
+    
+    **Using a self-hosted Docker Registry**:
+    ```shell
+    # format: ${localhost:port}/{}
+    export KO_DOCKER_REPO='localhost:5000/mypipelineimages'
+    ```
+  </Step>
+  
+  <Step title="Add Go binaries to PATH (optional)">
+    Add `$HOME/go/bin` to your system `PATH`:
+    
+    ```shell
+    export PATH="${PATH}:$HOME/go/bin"
+    ```
+  </Step>
+</Steps>
+
+<Note>Add these environment variables to your shell's configuration files (e.g., `~/.bash_profile` or `~/.bashrc`).</Note>
+
+### 5. Setup a Fork
+
+<Steps>
+  <Step title="Create a fork">
+    [Create a fork](https://help.github.com/articles/fork-a-repo/) of the `tektoncd/pipeline` repository in your GitHub account.
+  </Step>
+  
+  <Step title="Clone your fork">
+    ```shell
+    git clone git@github.com:${YOUR_GITHUB_USERNAME}/pipeline.git
+    ```
+    
+    <Note>Tekton uses Go Modules, so you can clone to any location.</Note>
+  </Step>
+  
+  <Step title="Configure remotes">
+    ```shell
+    cd pipeline
+    
+    # Add Tekton as upstream
+    git remote add upstream git@github.com:tektoncd/pipeline.git
+    
+    # Prevent accidental pushing to upstream
+    git remote set-url --push upstream no_push
+    
+    # Configure your fork as origin
+    git remote add origin git@github.com:${YOUR_GITHUB_USERNAME}/pipeline.git
+    ```
+  </Step>
+</Steps>
+
+### 6. Configure Container Registry
+
+<Tabs>
+  <Tab title="Docker Desktop">
+    Docker Desktop provides seamless integration with Docker Hub. Configure Docker Desktop with your Docker ID and password in its dashboard.
+  </Tab>
+  
+  <Tab title="Google Container Registry">
+    Configure authentication for your `KO_DOCKER_REPO`:
+    
+    ```shell
+    gcloud auth configure-docker
+    ```
+    
+    To pull images from `gcr.io/<project>`, configure IAM policies following the [GCR access control instructions](https://cloud.google.com/container-registry/docs/access-control#grant).
+    
+    If running GKE and GCR in the same project, add `storage-full` to the `--scopes` when creating your cluster, or grant read access:
+    
+    ```shell
+    gcloud projects add-iam-policy-binding <project-number> \
+      --member='serviceAccount:<project-number>-compute@developer.gserviceaccount.com' \
+      --role='roles/storage.objectViewer'
+    ```
+  </Tab>
+</Tabs>
+
+## Setup a Kubernetes Cluster
+
+### Recommended Minimum Configuration
+
+- Kubernetes version 1.28 or later
+- 4 (virtual) CPU nodes
+- 8 GB of platform memory
+- Node autoscaling, up to 3 nodes
+
+<Tabs>
+  <Tab title="Kind">
+    [Kind](https://kind.sigs.k8s.io/) is great for testing locally.
+    
+    <Steps>
+      <Step title="Install Docker">
+        Install [Docker](https://www.docker.com/get-started).
+      </Step>
+      
+      <Step title="Create cluster">
+        ```shell
+        kind create cluster
+        ```
+      </Step>
+      
+      <Step title="Configure ko">
+        ```shell
+        export KO_DOCKER_REPO="kind.local"
+        export KIND_CLUSTER_NAME="kind"  # only if you used a custom name
+        ```
+      </Step>
+    </Steps>
+    
+    <Note>The [Tekton plumbing project](https://github.com/tektoncd/plumbing) provides a ['tekton_in_kind.sh'](https://github.com/tektoncd/plumbing/tree/main/hack#tekton_in_kindsh) script that creates a cluster with Tekton components installed.</Note>
+  </Tab>
+  
+  <Tab title="Minikube">
+    Follow the instructions for [running locally with Minikube](https://github.com/tektoncd/pipeline/blob/main/docs/developers/local-setup.md#using-minikube).
+  </Tab>
+  
+  <Tab title="Docker Desktop">
+    Follow the instructions for [running locally with Docker Desktop](https://github.com/tektoncd/pipeline/blob/main/docs/developers/local-setup.md#using-docker-desktop).
+  </Tab>
+  
+  <Tab title="GKE">
+    <Steps>
+      <Step title="Setup GCP Project">
+        [Set up a GCP Project](https://cloud.google.com/resource-manager/docs/creating-managing-projects) and [enable the GKE API](https://cloud.google.com/kubernetes-engine/docs/quickstart#before-you-begin).
+      </Step>
+      
+      <Step title="Create GKE cluster">
+        ```bash
+        export PROJECT_ID=my-gcp-project
+        export CLUSTER_NAME=mycoolcluster
+
+        gcloud container clusters create $CLUSTER_NAME \
+          --enable-autoscaling \
+          --min-nodes=1 \
+          --max-nodes=3 \
+          --scopes=cloud-platform \
+          --no-issue-client-certificate \
+          --project=$PROJECT_ID \
+          --region=us-central1 \
+          --machine-type=e2-standard-4 \
+          --num-nodes=1 \
+          --cluster-version=1.28
+        ```
+        
+        <Note>Recommended machine type: `e2-standard-4`</Note>
+      </Step>
+      
+      <Step title="Grant cluster-admin permissions">
+        ```bash
+        kubectl create clusterrolebinding cluster-admin-binding \
+          --clusterrole=cluster-admin \
+          --user=$(gcloud config get-value core/account)
+        ```
+      </Step>
+    </Steps>
+  </Tab>
+</Tabs>
+
+## Building and Deploying
+
+### Install Pipeline
+
+Deploy Tekton using your local code:
+
+```shell
+ko apply -R -f config/
+```
+
+### Verify Installation
+
+Check that Tekton pipeline pods are running:
+
+```shell
+kubectl get pods -n tekton-pipelines
+```
+
+### Redeploy Controller
+
+As you make code changes, redeploy your controller:
+
+```shell
+ko apply -f config/controller.yaml
+```
+
+### Delete Pipeline
+
+Clean up everything:
+
+```shell
+# Without deleting the namespace
+ko delete -f config/
+
+# Including the namespace
+ko delete -R -f config/
+```
+
+<Warning>If using the same namespace as other components (dashboard, triggers), `ko delete -R -f config/` deletes those components too.</Warning>
+
+## Development Workflows
+
+### Iterating on Code Changes
+
+While developing:
+
+1. Make your code changes
+2. Run update scripts as needed:
+   - `./hack/update-deps.sh` - Update dependencies
+   - `./hack/update-codegen.sh` - Update type definitions
+   - `./hack/update-openapigen.sh` - Update OpenAPI specs
+3. Redeploy the controller
+4. Verify the installation and check logs
+
+### Accessing Logs
+
+**Controller logs**:
+```shell
+kubectl -n tekton-pipelines logs $(kubectl -n tekton-pipelines get pods -l app=tekton-pipelines-controller -o name)
+```
+
+**Webhook logs**:
+```shell
+kubectl -n tekton-pipelines logs $(kubectl -n tekton-pipelines get pods -l app=tekton-pipelines-webhook -o name)
+```
+
+**TaskRun/PipelineRun logs**: See [docs on accessing logs](https://github.com/tektoncd/pipeline/blob/main/docs/logs.md).
+
+### Testing
+
+For comprehensive testing documentation, see the [Testing Guide](https://github.com/tektoncd/pipeline/blob/main/test/README.md).
+
+### Adding New CRD Types
+
+If you need to add a new CRD type:
+
+<Steps>
+  <Step title="Add YAML definition">
+    Add a yaml definition in `config/`
+  </Step>
+  
+  <Step title="Update cluster roles">
+    Add the type to cluster roles in:
+    - `config/200-clusterrole.yaml`
+    - `config/clusterrole-aggregate-edit.yaml`
+    - `config/clusterrole-aggregate-view.yaml`
+  </Step>
+  
+  <Step title="Add Go structs">
+    Add go structs in `pkg/apis/pipeline/v1alpha1` implementing:
+    - `Defaultable` interface
+    - `Validatable` interface
+  </Step>
+  
+  <Step title="Register with webhook">
+    Register it with the webhook in `cmd/webhook/main.go`
+  </Step>
+  
+  <Step title="Add to known types">
+    Add the new type to the list of known types in `pkg/apis/pipeline/v1alpha1/register.go`
+  </Step>
+</Steps>
+
+See the [API compatibility policy](https://github.com/tektoncd/pipeline/blob/main/api_compatibility_policy.md) for more information.
+
+## Debugging
+
+`ko` has built-in support for the `delve` debugger.
+
+### Setup Debugging
+
+<Steps>
+  <Step title="Comment out probes">
+    Update `config/controller.yaml` and comment out the liveness and readiness probes to prevent timeouts.
+  </Step>
+  
+  <Step title="Build in debug mode">
+    ```shell
+    ko apply -f config/controller.yaml --debug --disable-optimizations
+    ```
+  </Step>
+  
+  <Step title="Forward debugging port">
+    ```shell
+    kubectl port-forward -n tekton-pipelines deployments/tekton-pipelines-controller 40000:40000
+    ```
+  </Step>
+  
+  <Step title="Add VSCode configuration">
+    Add to `launch.json`:
+    
+    ```json
+    {
+      "version": "0.2.0",
+      "configurations": [
+        {
+          "name": "Attach to Delve (Tekton Controller)",
+          "type": "go",
+          "request": "attach",
+          "mode": "remote",
+          "port": 40000,
+          "host": "127.0.0.1",
+          "apiVersion": 2,
+          "substitutePath": [
+            {
+              "from": "${workspaceFolder}",
+              "to": "github.com/tektoncd/pipeline"
+            }
+          ]
+        }
+      ]
+    }
+    ```
+  </Step>
+</Steps>
+
+Now you can attach to `delve` in VSCode, set breakpoints, and debug PipelineRun execution.

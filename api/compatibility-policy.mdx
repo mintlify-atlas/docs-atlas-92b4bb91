@@ -1,0 +1,193 @@
+---
+title: API Compatibility Policy
+description: Understand Tekton's API stability guarantees and versioning
+---
+
+## Overview
+
+This document defines the compatibility policy for the Tekton Pipelines API. Users should understand what they can rely on and what may change in future versions.
+
+## What is the API?
+
+The API consists of:
+
+- The structure of CRDs including `spec` and `status` sections
+- The ordering of `steps` within the status
+- The naming of `step` containers within the status
+- Labels propagated from PipelineRuns to TaskRuns and TaskRuns to Pods
+- The structure of directories created in executing containers
+- The interfaces of images built as part of Tekton Pipelines
+
+## Backwards Incompatible Changes
+
+A backwards incompatible change requires users to update existing instances of CRDs or change their CRD definitions.
+
+## API Versions
+
+### Alpha CRDs
+
+<ParamField path="apiVersion" type="string">
+  Contains `alpha` (e.g., `v1alpha1`)
+</ParamField>
+
+- Features may be dropped at any time with one release of warning
+- No stability guarantees
+- For experimental features
+
+### Beta CRDs
+
+<ParamField path="apiVersion" type="string">
+  Contains `beta` (e.g., `v1beta1`)
+</ParamField>
+
+- Features will not be dropped without migration path
+- Backwards incompatible changes require:
+  - Introduction in backwards compatible manner
+  - Deprecation warning in release notes
+  - Migration instructions
+  - At least 9 months migration period
+
+**Current Beta CRDs:**
+- `v1beta1.CustomRun`
+- `v1beta1.ResolutionRequest`
+- `v1beta1.StepAction`
+
+### GA (Stable) CRDs
+
+<ParamField path="apiVersion" type="string">
+  Format: `vX` where X is an integer (e.g., `v1`)
+</ParamField>
+
+- API versions remain available for all future releases within a semver major version
+- Stable features may be deprecated but only removed by incrementing API version
+- No backwards incompatible changes without incrementing API version
+- Alpha and beta features may exist within stable versions via feature flags
+
+**Current Stable CRDs:**
+- `v1.Task`
+- `v1.TaskRun`
+- `v1.Pipeline`
+- `v1.PipelineRun`
+
+## Feature Gates
+
+Stability levels of feature gates are independent from CRD apiVersions.
+
+### Global Flag: `enable-api-fields`
+
+<ParamField path="enable-api-fields" type="string" default="beta">
+  Controls which stability level of features are enabled
+
+  Values:
+  - `stable` - Only stable features enabled
+  - `beta` - Stable and beta features enabled (default)
+  - `alpha` - All features enabled including alpha
+</ParamField>
+
+| Value | Stable Features | Beta Features | Alpha Features |
+|-------|----------------|---------------|----------------|
+| stable | ✓ | ✗ | ✗ |
+| beta | ✓ | ✓ | ✗ |
+| alpha | ✓ | ✓ | ✓ |
+
+### Per-Feature Flags
+
+After v0.53.0, new API-driven features use dedicated feature flags instead of the global flag.
+
+### Alpha Features
+
+- Disabled by default
+- May be dropped or changed at any time with one release of warning
+- No guarantee of promotion to beta
+- For experimentation and gathering feedback
+
+### Beta Features
+
+- Enabled by default
+- Can be disabled by setting `enable-api-fields` to `stable`
+- Will not be dropped without migration path
+- 9 month support period for backwards incompatible changes
+- Reviewed regularly for promotion to stable
+
+### GA/Stable Features
+
+- Enabled by default
+- Cannot be disabled
+- Will not be removed or changed incompatibly without incrementing API version
+- Full backwards compatibility guarantee
+
+## Feature Graduation Process
+
+### Alpha Stage
+
+- Feature first introduced
+- Disabled by default
+- Gather user feedback
+- Validate needs and motivations
+
+### Beta Stage
+
+- Needs validated from alpha feedback
+- Further testing and refinement
+- Still disabled by default with dedicated feature flag
+- More stability guarantees
+
+### Stable Stage
+
+- Feature complete and production-ready
+- Enabled by default
+- Cannot be disabled
+- Full compatibility guarantees
+
+## Approving API Changes
+
+### Additive Changes
+
+- Add to API without breaking existing usage
+- Require approval from at least 2 OWNERS
+
+### Backwards Incompatible Changes
+
+- Change or remove existing API fields
+- Require new fields all controllers must support
+- Require approval from >50% of OWNERS
+
+## Deprecated Features
+
+Tekton maintains a [deprecations list](https://github.com/tektoncd/pipeline/tree/main/docs/deprecations.md) including the earliest removal date for each feature.
+
+## Go Library Compatibility
+
+The compatibility policy for Go libraries covers:
+
+- CRD structs in `pkg/apis`
+- Generated clients in `pkg/client`
+- Resolver interface
+
+### Stable CRDs
+
+- Go structs may not change in breaking ways without semver major version bump
+- Client libraries not removed when CRD stops being served
+- Fields tombstoned (not removed) when support dropped
+
+### Beta CRDs
+
+- Go structs may change if yaml/JSON API unaffected
+- Client libraries not removed until last supporting release reaches end of life
+- Alpha fields tombstoned when dropped
+
+### Alpha CRDs
+
+- Go structs may change in breaking ways
+- One release warning if yaml/JSON API impacted
+- Fields may be removed (not tombstoned)
+
+## Migration Guidance
+
+When migrating between API versions:
+
+1. Check the [migration guides](https://tekton.dev/docs/pipelines/migrating-v1beta1-to-v1/)
+2. Review deprecation notices in release notes
+3. Test in non-production environments
+4. Use conversion webhooks where available
+5. Update client code and CI/CD configurations

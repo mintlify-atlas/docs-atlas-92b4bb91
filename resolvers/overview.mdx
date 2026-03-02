@@ -1,0 +1,133 @@
+---
+title: Resolvers Overview
+description: Fetch Tekton resources from remote locations using built-in resolvers
+---
+
+Remote Resolution is a Tekton beta feature that allows you to fetch Tasks and Pipelines from remote sources outside the cluster. Tekton provides several built-in resolvers for fetching from git repositories, OCI registries, and more, as well as a framework for writing custom resolvers.
+
+## What are Resolvers?
+
+A Resolver is a program that runs in a Kubernetes cluster alongside Tekton Pipelines and "resolves" requests for Tasks and Pipelines from remote locations. For example, if you submit a PipelineRun that needs a Pipeline YAML stored in a git repo, a Resolver fetches the YAML file from git and returns it to Tekton Pipelines.
+
+This pattern extends beyond just git, allowing integration with other version control systems, cloud buckets, or storage systems without modifying Tekton Pipelines itself.
+
+## Available Resolvers
+
+<CardGroup cols={2}>
+  <Card title="Git Resolver" icon="git" href="/resolvers/git-resolver">
+    Fetch resources from git repositories using anonymous or authenticated access
+  </Card>
+  <Card title="Hub Resolver" icon="store" href="/resolvers/hub-resolver">
+    Fetch resources from Artifact Hub or Tekton Hub catalogs
+  </Card>
+  <Card title="Bundle Resolver" icon="box" href="/resolvers/bundle-resolver">
+    Fetch resources from OCI bundles stored in container registries
+  </Card>
+  <Card title="Cluster Resolver" icon="cluster" href="/resolvers/cluster-resolver">
+    Fetch resources from within the same Kubernetes cluster
+  </Card>
+  <Card title="HTTP Resolver" icon="globe" href="/resolvers/http-resolver">
+    Fetch resources from HTTP/HTTPS URLs
+  </Card>
+  <Card title="Custom Resolver" icon="code" href="/resolvers/custom-resolver">
+    Build your own resolver for custom storage backends
+  </Card>
+</CardGroup>
+
+## Requirements
+
+- A cluster running Tekton Pipeline v0.41.0 or later
+- Built-in remote resolvers installed
+- Beta features enabled
+- Appropriate feature flags enabled in the `resolvers-feature-flags` ConfigMap
+
+## Enabling Resolvers
+
+Resolvers are enabled by setting the appropriate feature flag in the `resolvers-feature-flags` ConfigMap in the `tekton-pipelines-resolvers` namespace:
+
+```yaml
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: resolvers-feature-flags
+  namespace: tekton-pipelines-resolvers
+data:
+  enable-git-resolver: "true"
+  enable-hub-resolver: "true"
+  enable-bundles-resolver: "true"
+  enable-cluster-resolver: "true"
+  enable-http-resolver: "true"
+```
+
+## Default Resolver Type
+
+You can configure a default resolver type using the `default-resolver-type` field in the `config-defaults` ConfigMap (alpha feature):
+
+```yaml
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: config-defaults
+  namespace: tekton-pipelines
+data:
+  default-resolver-type: "git"
+```
+
+## Resolver Cache Configuration
+
+The resolver cache improves performance by caching resolved resources for bundle and git resolvers. Configure caching globally using the `resolver-cache-config` ConfigMap:
+
+```yaml
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: resolver-cache-config
+  namespace: tekton-pipelines-resolvers
+data:
+  max-size: "1000"  # Maximum cache entries
+  default-ttl: "5m"  # Cache entry time-to-live
+```
+
+<CardGroup cols={2}>
+  <Card title="max-size" icon="database">
+    Maximum number of cache entries (default: 1000)
+  </Card>
+  <Card title="default-ttl" icon="clock">
+    Time-to-live for cache entries (default: 5m)
+  </Card>
+</CardGroup>
+
+## How Resolution Works
+
+When you reference a remote resource in a PipelineRun or TaskRun:
+
+1. Tekton creates a `ResolutionRequest` with the resolver type and parameters
+2. The appropriate resolver receives the request based on label matching
+3. The resolver fetches the resource from the remote location
+4. The resolver returns the resource data to Tekton Pipelines
+5. Tekton executes the Pipeline or Task
+
+## ResolutionRequest Status
+
+Each resolved resource includes metadata in `ResolutionRequest.Status.RefSource`:
+
+- **url/uri**: The source location of the resource
+- **digest**: Hash of the resource content for verification
+- **entrypoint**: Path or name of the specific resource
+
+This metadata enables supply chain security tools like Tekton Chains to record provenance information.
+
+## Getting Started
+
+To start using resolvers, choose the resolver that matches your needs:
+
+- Use **Git Resolver** for resources in version control
+- Use **Hub Resolver** for community-maintained catalog resources
+- Use **Bundle Resolver** for OCI-bundled resources
+- Use **Cluster Resolver** for resources in the same cluster
+- Use **HTTP Resolver** for resources at HTTP/HTTPS URLs
+- Create a **Custom Resolver** for proprietary storage systems
+
+<Note>
+Remote Resolution was initially created as TEP-060 and migrated into the core Pipelines project in [#4710](https://github.com/tektoncd/pipeline/issues/4710).
+</Note>

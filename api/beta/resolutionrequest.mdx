@@ -1,0 +1,203 @@
+---
+title: ResolutionRequest
+description: API reference for the ResolutionRequest v1beta1 resource
+---
+
+<Note>
+  ResolutionRequest is at v1beta1 stability level.
+</Note>
+
+A ResolutionRequest is used to request the content of a Tekton resource from a remote location, such as a git repository or OCI registry.
+
+## Resource Definition
+
+<ParamField path="apiVersion" type="string" required>
+  `resolution.tekton.dev/v1beta1`
+</ParamField>
+
+<ParamField path="kind" type="string" required>
+  `ResolutionRequest`
+</ParamField>
+
+<ParamField path="metadata" type="ObjectMeta" required>
+  Standard Kubernetes metadata.
+</ParamField>
+
+<ParamField path="spec" type="ResolutionRequestSpec" required>
+  Specification for the resolution request.
+</ParamField>
+
+<ParamField path="status" type="ResolutionRequestStatus">
+  Status of the resolution request.
+</ParamField>
+
+## ResolutionRequestSpec
+
+<ParamField path="params" type="[]Param">
+  Runtime parameters passed to the resolver to help locate the resource.
+
+  Common parameters vary by resolver:
+  
+  **Git Resolver:**
+  - `url` - Repository URL
+  - `revision` - Branch, tag, or commit SHA
+  - `pathInRepo` - Path to the resource file
+  
+  **Bundle Resolver:**
+  - `bundle` - OCI bundle reference
+  - `name` - Name of the resource in the bundle
+  - `kind` - Kind of resource (Task, Pipeline)
+  
+  **Hub Resolver:**
+  - `name` - Resource name
+  - `version` - Resource version
+  - `catalog` - Catalog name
+  - `kind` - Resource kind
+
+  See [Parameter Types](/api/types/params) for details.
+</ParamField>
+
+<ParamField path="url" type="string">
+  Runtime URL passed to the resolver. This is an alpha feature.
+</ParamField>
+
+## ResolutionRequestStatus
+
+<ResponseField name="conditions" type="[]Condition">
+  Conditions describing the resolution state.
+
+  <Expandable title="Condition fields">
+    <ResponseField name="type" type="string">
+      Primary type: `Succeeded`
+    </ResponseField>
+
+    <ResponseField name="status" type="string">
+      - `True` - Resolution succeeded
+      - `False` - Resolution failed
+      - `Unknown` - Resolution in progress
+    </ResponseField>
+
+    <ResponseField name="reason" type="string">
+      Reason for the current state.
+    </ResponseField>
+
+    <ResponseField name="message" type="string">
+      Human-readable message.
+    </ResponseField>
+  </Expandable>
+</ResponseField>
+
+<ResponseField name="data" type="string">
+  The resolved content of the requested resource, inline in the ResolutionRequest.
+
+  This is typically a YAML representation of a Task or Pipeline.
+</ResponseField>
+
+<ResponseField name="refSource" type="RefSource">
+  Source reference of the remote data including URL, digest, and entrypoint.
+
+  <Expandable title="RefSource fields">
+    <ResponseField name="uri" type="string">
+      URI of the source (e.g., git repo URL or OCI image reference).
+    </ResponseField>
+
+    <ResponseField name="digest" type="map[string]string">
+      Content digest for verification.
+    </ResponseField>
+
+    <ResponseField name="entryPoint" type="string">
+      Entry point within the source (e.g., file path).
+    </ResponseField>
+  </Expandable>
+</ResponseField>
+
+## Resolvers
+
+Tekton includes several built-in resolvers:
+
+### Git Resolver
+
+Resolves resources from git repositories.
+
+```yaml
+resolver: git
+params:
+  - name: url
+    value: https://github.com/tektoncd/catalog.git
+  - name: revision
+    value: main
+  - name: pathInRepo
+    value: task/git-clone/0.9/git-clone.yaml
+```
+
+### Bundle Resolver
+
+Resolves resources from OCI bundles.
+
+```yaml
+resolver: bundle
+params:
+  - name: bundle
+    value: gcr.io/tekton-releases/catalog/upstream/git-clone:0.9
+  - name: name
+    value: git-clone
+  - name: kind
+    value: Task
+```
+
+### Hub Resolver
+
+Resolves resources from Artifact Hub.
+
+```yaml
+resolver: hub
+params:
+  - name: catalog
+    value: tekton-catalog-tasks
+  - name: type
+    value: artifact
+  - name: kind
+    value: task
+  - name: name
+    value: git-clone
+  - name: version
+    value: "0.9"
+```
+
+### Cluster Resolver
+
+Resolves resources from the same Kubernetes cluster.
+
+```yaml
+resolver: cluster
+params:
+  - name: kind
+    value: Task
+  - name: name
+    value: my-task
+  - name: namespace
+    value: default
+```
+
+## Example
+
+ResolutionRequests are typically created automatically when using remote resolution in TaskRuns or PipelineRuns:
+
+```yaml
+apiVersion: tekton.dev/v1
+kind: TaskRun
+metadata:
+  name: git-clone-run
+spec:
+  taskRef:
+    resolver: git
+    params:
+      - name: url
+        value: https://github.com/tektoncd/catalog.git
+      - name: revision
+        value: main
+      - name: pathInRepo
+        value: task/git-clone/0.9/git-clone.yaml
+```
+
+This creates a ResolutionRequest in the background to fetch the Task definition.

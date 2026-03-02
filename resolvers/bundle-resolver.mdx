@@ -1,0 +1,315 @@
+---
+title: Bundle Resolver
+description: Fetch Tasks and Pipelines from OCI bundles in container registries
+---
+
+The Bundle Resolver fetches Tekton resources from OCI bundles stored in container registries, enabling secure and versioned distribution of Tasks and Pipelines.
+
+## Resolver Type
+
+This resolver responds to type `bundles`.
+
+## Parameters
+
+<ParamField path="bundle" type="string" required>
+  The bundle URL pointing at the OCI image to fetch.
+  
+  Example: `gcr.io/tekton-releases/catalog/upstream/golang-build:0.1`
+  
+  Example with digest: `docker.io/myuser/task@sha256:053a6cb9f3711d4527dd0d37ac610e8727ec0288a898d5dfbd79b25bcaa29828`
+</ParamField>
+
+<ParamField path="name" type="string" required>
+  The name of the resource to pull out of the bundle.
+  
+  Example: `golang-build`, `hello-world`
+</ParamField>
+
+<ParamField path="kind" type="string" required>
+  The resource kind to pull out of the bundle.
+  
+  Options: `task`, `pipeline`
+</ParamField>
+
+<ParamField path="secret" type="string">
+  The name of the secret to use when constructing registry credentials.
+  
+  Example: `registry-credentials`
+</ParamField>
+
+<ParamField path="cache" type="string" default="auto">
+  Controls caching behavior for the resolved resource.
+  
+  Options: `always`, `never`, `auto`
+</ParamField>
+
+## Requirements
+
+- A cluster running Tekton Pipeline v0.41.0 or later
+- Built-in remote resolvers installed
+- The `enable-bundles-resolver` feature flag set to `true` in the `resolvers-feature-flags` ConfigMap
+- Beta features enabled
+
+## Configuration
+
+The Bundle Resolver uses the `bundleresolver-config` ConfigMap in the `tekton-pipelines-resolvers` namespace.
+
+### Configuration Options
+
+<CardGroup cols={2}>
+  <Card title="backoff-duration" icon="clock">
+    Initial duration for a backoff (e.g., `500ms`, `2s`)
+  </Card>
+  <Card title="backoff-factor" icon="chart-line">
+    Factor by which sleep duration increases (e.g., `2.5`, `4.0`)
+  </Card>
+  <Card title="backoff-jitter" icon="random">
+    Random sleep addition between 0 and duration × jitter (e.g., `0.1`, `0.5`)
+  </Card>
+  <Card title="backoff-steps" icon="stairs">
+    Number of backoff attempts (e.g., `3`, `7`)
+  </Card>
+  <Card title="backoff-cap" icon="stop">
+    Maximum backoff duration (e.g., `10s`, `20s`)
+  </Card>
+  <Card title="default-kind" icon="cube">
+    Default layer kind in bundle image (e.g., `task`, `pipeline`)
+  </Card>
+</CardGroup>
+
+### Caching Options
+
+The bundle resolver supports caching to improve performance:
+
+| Cache Value | Description |
+|-------------|-------------|
+| `always` | Always cache resolved resources |
+| `never` | Never cache resolved resources |
+| `auto` | Cache only bundles pulled by digest (default) |
+
+Configure default cache mode in the `bundleresolver-config` ConfigMap:
+
+```yaml
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: bundleresolver-config
+  namespace: tekton-pipelines-resolvers
+data:
+  default-cache-mode: "auto"
+```
+
+### Global Cache Configuration
+
+Configure cache size and TTL using the `resolver-cache-config` ConfigMap:
+
+```yaml
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: resolver-cache-config
+  namespace: tekton-pipelines-resolvers
+data:
+  max-size: "1000"  # Maximum cache entries
+  ttl: "5m"         # Time-to-live for entries
+```
+
+## Usage Examples
+
+### Task Resolution by Digest
+
+```yaml
+apiVersion: tekton.dev/v1beta1
+kind: TaskRun
+metadata:
+  name: bundle-task-digest
+spec:
+  taskRef:
+    resolver: bundles
+    params:
+    - name: bundle
+      value: docker.io/ptasci67/example-oci@sha256:053a6cb9f3711d4527dd0d37ac610e8727ec0288a898d5dfbd79b25bcaa29828
+    - name: name
+      value: hello-world
+    - name: kind
+      value: task
+```
+
+### Task Resolution by Tag
+
+```yaml
+apiVersion: tekton.dev/v1beta1
+kind: TaskRun
+metadata:
+  name: bundle-task-tag
+spec:
+  taskRef:
+    resolver: bundles
+    params:
+    - name: bundle
+      value: gcr.io/tekton-releases/catalog/upstream/git-clone:0.7
+    - name: name
+      value: git-clone
+    - name: kind
+      value: task
+  params:
+  - name: url
+    value: https://github.com/tektoncd/catalog
+  workspaces:
+  - name: output
+    volumeClaimTemplate:
+      spec:
+        accessModes:
+        - ReadWriteOnce
+        resources:
+          requests:
+            storage: 500Mi
+```
+
+### Task Resolution with Private Registry
+
+```yaml
+apiVersion: tekton.dev/v1beta1
+kind: TaskRun
+metadata:
+  name: bundle-private-registry
+spec:
+  taskRef:
+    resolver: bundles
+    params:
+    - name: bundle
+      value: myregistry.io/myorg/private-task:latest
+    - name: name
+      value: my-task
+    - name: kind
+      value: task
+    - name: secret
+      value: registry-credentials
+```
+
+### Pipeline Resolution
+
+```yaml
+apiVersion: tekton.dev/v1beta1
+kind: PipelineRun
+metadata:
+  name: bundle-pipeline
+spec:
+  pipelineRef:
+    resolver: bundles
+    params:
+    - name: bundle
+      value: 10.96.190.208:5000/simple/pipeline:latest
+    - name: name
+      value: hello-pipeline
+    - name: kind
+      value: pipeline
+  params:
+  - name: username
+    value: "tekton pipelines"
+```
+
+### Task Resolution with Always Cache
+
+```yaml
+apiVersion: tekton.dev/v1beta1
+kind: TaskRun
+metadata:
+  name: bundle-always-cache
+spec:
+  taskRef:
+    resolver: bundles
+    params:
+    - name: bundle
+      value: gcr.io/tekton-releases/catalog/upstream/golang-build:0.1
+    - name: name
+      value: golang-build
+    - name: kind
+      value: task
+    - name: cache
+      value: always
+```
+
+### Task Resolution with Never Cache
+
+```yaml
+apiVersion: tekton.dev/v1beta1
+kind: TaskRun
+metadata:
+  name: bundle-never-cache
+spec:
+  taskRef:
+    resolver: bundles
+    params:
+    - name: bundle
+      value: gcr.io/tekton-releases/catalog/upstream/golang-build:latest
+    - name: name
+      value: golang-build
+    - name: kind
+      value: task
+    - name: cache
+      value: never
+```
+
+## Creating Registry Credentials
+
+For private registries, create a secret with registry credentials:
+
+```bash
+kubectl create secret docker-registry registry-credentials \
+  --docker-server=myregistry.io \
+  --docker-username=myuser \
+  --docker-password=mypassword \
+  --docker-email=myemail@example.com
+```
+
+## ResolutionRequest Status
+
+The `ResolutionRequest.Status.RefSource` field captures source metadata:
+
+```yaml
+status:
+  refSource:
+    uri: gcr.io/tekton-releases/catalog/upstream/git-clone
+    digest:
+      sha256: f51ca50f1c065acba8290ef14adec8461915ecc5f70a8eb26190c6e8e0ededaf
+    entryPoint: git-clone
+  data: YXBpVmVyc2lvbjog...
+```
+
+<CardGroup cols={3}>
+  <Card title="uri" icon="link">
+    Image repository URI without tag or digest
+  </Card>
+  <Card title="digest" icon="fingerprint">
+    Map of algorithm to hex-encoded image digest
+  </Card>
+  <Card title="entryPoint" icon="file">
+    Resource name in the OCI bundle
+  </Card>
+</CardGroup>
+
+## Best Practices
+
+<CardGroup cols={2}>
+  <Card title="Use Digests" icon="shield-check">
+    Reference bundles by digest for immutable, reproducible builds
+  </Card>
+  <Card title="Enable Caching" icon="rocket">
+    Use `cache: auto` or `cache: always` for frequently used bundles
+  </Card>
+  <Card title="Secure Credentials" icon="lock">
+    Store registry credentials in Kubernetes secrets
+  </Card>
+  <Card title="Version Bundles" icon="tags">
+    Tag bundle images with semantic versions
+  </Card>
+</CardGroup>
+
+<Note>
+When using `cache: auto` (default), only bundles pulled by digest are cached. This ensures cached content is immutable.
+</Note>
+
+<Tip>
+The Tekton Catalog does not currently publish pipelines as OCI bundles. Use the Hub or Git resolvers for pipelines.
+</Tip>

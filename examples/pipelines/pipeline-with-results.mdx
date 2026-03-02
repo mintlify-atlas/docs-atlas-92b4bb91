@@ -1,0 +1,134 @@
+---
+title: "Pipeline with Results"
+description: "Using task results in pipelines to pass data between tasks"
+---
+
+Pipeline results aggregate outputs from tasks and make them available after the pipeline completes. This example also shows how task results create implicit dependencies.
+
+## Example
+
+This is the same example as the [simple pipeline](/examples/pipelines/simple-pipeline), but focusing on the results aspect:
+
+```yaml
+apiVersion: tekton.dev/v1
+kind: Pipeline
+metadata:
+  name: sum-three-pipeline
+spec:
+  params:
+    - name: first
+      description: the first operand
+    - name: second
+      description: the second operand
+    - name: third
+      description: the third operand
+  tasks:
+    - name: first-add
+      taskRef:
+        name: add-task
+      params:
+        - name: first
+          value: $(params.first)
+        - name: second
+          value: $(params.second)
+    - name: second-add
+      taskRef:
+        name: add-task
+      params:
+        - name: first
+          value: $(tasks.first-add.results.sum)  # Uses result from first-add
+        - name: second
+          value: $(params.third)
+  results:
+    - name: sum
+      description: the sum of all three operands
+      value: $(tasks.second-add.results.sum)
+    - name: partial-sum
+      description: the sum of first two operands
+      value: $(tasks.first-add.results.sum)
+    - name: all-sum
+      description: the sum of everything
+      value: $(tasks.second-add.results.sum)-$(tasks.first-add.results.sum)
+```
+
+## How It Works
+
+<Steps>
+  <Step title="First Task Emits Result">
+    The `first-add` task completes and emits a result named `sum` containing the value 12 (2 + 10).
+  </Step>
+  
+  <Step title="Second Task Waits and Uses Result">
+    The `second-add` task references `$(tasks.first-add.results.sum)`, which creates an implicit dependency. Tekton ensures `first-add` completes before `second-add` starts.
+  </Step>
+  
+  <Step title="Pipeline Results Are Computed">
+    After all tasks complete, the pipeline evaluates its result expressions. Each pipeline result can reference one or more task results.
+  </Step>
+  
+  <Step title="Results Available in PipelineRun">
+    The computed results are stored in the PipelineRun status and can be queried using `tkn pipelinerun describe` or by checking the Kubernetes resource.
+  </Step>
+</Steps>
+
+## Referencing Task Results
+
+Use this syntax to reference a task result:
+
+```
+$(tasks.TASK_NAME.results.RESULT_NAME)
+```
+
+Examples:
+- `$(tasks.first-add.results.sum)` - Get the sum result from first-add task
+- `$(tasks.build.results.image-digest)` - Get an image digest from a build task
+
+## Combining Results
+
+Pipeline results can combine multiple task results:
+
+```yaml
+results:
+  - name: all-sum
+    value: $(tasks.second-add.results.sum)-$(tasks.first-add.results.sum)
+```
+
+This produces: `22-12`
+
+## Expected Output
+
+After running with parameters (2, 10, 10):
+
+```bash
+tkn pipelinerun describe sum-three-pipeline-run
+```
+
+```
+RESULTS
+NAME           VALUE
+sum            22
+partial-sum    12
+all-sum        22-12
+```
+
+## Implicit Task Ordering
+
+When a task references another task's result, Tekton automatically:
+1. Creates a dependency between the tasks
+2. Ensures the producer task runs before the consumer task
+3. Waits for the producer to complete successfully before starting the consumer
+
+This means you don't need to use `runAfter` when tasks have result dependencies.
+
+## Key Concepts
+
+- **Task Results**: Output values from individual tasks
+- **Pipeline Results**: Aggregated outputs from the entire pipeline
+- **Implicit Dependencies**: Referencing a task's result automatically creates a dependency
+- **Result Substitution**: Use `$(tasks.NAME.results.RESULT)` syntax to access task results
+- **Result Composition**: Pipeline results can combine multiple task results
+
+## Next Steps
+
+- See [parallel tasks](/examples/pipelines/parallel-tasks) for more complex dependencies
+- Learn about [multi-stage pipelines](/examples/real-world/multi-stage-pipeline)
