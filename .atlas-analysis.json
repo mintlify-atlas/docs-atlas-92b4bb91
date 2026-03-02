@@ -1,0 +1,198 @@
+{
+  "projectType": "infrastructure",
+  "projectName": "Tekton Pipelines",
+  "projectDescription": "A cloud-native CI/CD pipeline framework for Kubernetes that provides declarative resources to build, test, and deploy applications.",
+  "theme": "aspen",
+  "primaryColor": "#0066FF",
+  "lightColor": "#4D94FF",
+  "darkColor": "#0052CC",
+  "navigation": {
+    "tabs": [
+      {
+        "tab": "Documentation",
+        "groups": [
+          {
+            "group": "Get Started",
+            "pages": [
+              "introduction",
+              "installation",
+              "quickstart"
+            ]
+          },
+          {
+            "group": "Core Concepts",
+            "pages": [
+              "concepts/tasks",
+              "concepts/taskruns",
+              "concepts/pipelines",
+              "concepts/pipelineruns",
+              "concepts/workspaces",
+              "concepts/parameters"
+            ]
+          },
+          {
+            "group": "Guides",
+            "pages": [
+              "guides/authentication",
+              "guides/variables",
+              "guides/results",
+              "guides/sidecars",
+              "guides/workspaces-advanced",
+              "guides/remote-resolution",
+              "guides/debugging"
+            ]
+          },
+          {
+            "group": "Advanced Features",
+            "pages": [
+              "advanced/matrix",
+              "advanced/custom-tasks",
+              "advanced/step-actions",
+              "advanced/pipelines-in-pipelines",
+              "advanced/trusted-resources",
+              "advanced/hermetic-execution"
+            ]
+          },
+          {
+            "group": "Resolvers",
+            "pages": [
+              "resolvers/overview",
+              "resolvers/git-resolver",
+              "resolvers/hub-resolver",
+              "resolvers/bundle-resolver",
+              "resolvers/cluster-resolver",
+              "resolvers/http-resolver",
+              "resolvers/custom-resolver"
+            ]
+          },
+          {
+            "group": "Operations",
+            "pages": [
+              "operations/configuration",
+              "operations/high-availability",
+              "operations/metrics",
+              "operations/events",
+              "operations/performance",
+              "operations/security"
+            ]
+          },
+          {
+            "group": "Migration",
+            "pages": [
+              "migration/v1beta1-to-v1",
+              "migration/v1alpha1-to-v1beta1",
+              "migration/deprecations"
+            ]
+          }
+        ]
+      },
+      {
+        "tab": "API Reference",
+        "groups": [
+          {
+            "group": "Overview",
+            "pages": [
+              "api/overview",
+              "api/compatibility-policy"
+            ]
+          },
+          {
+            "group": "v1 Resources",
+            "pages": [
+              "api/v1/task",
+              "api/v1/taskrun",
+              "api/v1/pipeline",
+              "api/v1/pipelinerun",
+              "api/v1/stepaction"
+            ]
+          },
+          {
+            "group": "Beta Resources",
+            "pages": [
+              "api/beta/customrun",
+              "api/beta/resolutionrequest",
+              "api/beta/verificationpolicy"
+            ]
+          },
+          {
+            "group": "Common Types",
+            "pages": [
+              "api/types/params",
+              "api/types/results",
+              "api/types/workspaces",
+              "api/types/when-expressions"
+            ]
+          }
+        ]
+      },
+      {
+        "tab": "Examples",
+        "groups": [
+          {
+            "group": "Task Examples",
+            "pages": [
+              "examples/tasks/basic-task",
+              "examples/tasks/task-with-params",
+              "examples/tasks/task-with-workspaces",
+              "examples/tasks/task-with-results"
+            ]
+          },
+          {
+            "group": "Pipeline Examples",
+            "pages": [
+              "examples/pipelines/simple-pipeline",
+              "examples/pipelines/pipeline-with-params",
+              "examples/pipelines/pipeline-with-results",
+              "examples/pipelines/parallel-tasks"
+            ]
+          },
+          {
+            "group": "Real-World Examples",
+            "pages": [
+              "examples/real-world/build-docker-image",
+              "examples/real-world/git-clone-build",
+              "examples/real-world/multi-stage-pipeline"
+            ]
+          }
+        ]
+      },
+      {
+        "tab": "Contributing",
+        "groups": [
+          {
+            "group": "Development",
+            "pages": [
+              "contributing/overview",
+              "contributing/development-guide",
+              "contributing/architecture"
+            ]
+          }
+        ]
+      }
+    ]
+  },
+  "keyFeatures": [
+    "Kubernetes-native CI/CD pipelines with declarative YAML definitions",
+    "Reusable Tasks and Pipelines that run as Kubernetes Pods",
+    "Workspaces for sharing data between Tasks in a Pipeline",
+    "Parameter substitution and Results for passing data between Tasks",
+    "Remote resolution to fetch Tasks and Pipelines from Git, OCI registries, and more",
+    "Matrix execution for parallel task runs with different parameter combinations",
+    "Custom Tasks for extending Tekton with custom controllers",
+    "Trusted Resources with signature verification for secure pipeline execution"
+  ],
+  "publicApiSurface": [
+    "Task - Defines a series of steps to execute in containers",
+    "TaskRun - Instantiates and executes a Task",
+    "Pipeline - Defines a series of Tasks to execute in order or parallel",
+    "PipelineRun - Instantiates and executes a Pipeline",
+    "StepAction - Reusable steps that can be referenced in Tasks",
+    "CustomRun - Executes custom tasks implemented by external controllers",
+    "ResolutionRequest - Fetches resources from remote locations",
+    "VerificationPolicy - Defines policies for trusted resource verification",
+    "Workspaces - Shared filesystem volumes between Tasks",
+    "Parameters - Input values for Tasks and Pipelines",
+    "Results - Output values from Tasks and Pipelines",
+    "When Expressions - Conditional execution guards for Tasks"
+  ]
+}
